@@ -1,2 +1,0 @@
-2026-04-22 08:14:03.753 [main] [] ERROR o.h.e.jdbc.spi.SqlExceptionHelper - The connection attempt failed.
-2026-04-22 08:14:03.756 [main] [] ERROR o.s.o.j.LocalContainerEntityManagerFactoryBean - Failed to initialize JPA EntityManagerFactory: Unable to create requested service [org.hibernate.engine.jdbc.env.spi.JdbcEnvironment] due to: Unable to determine Dialect without JDBC metadata (please set 'jakarta.persistence.jdbc.url' for common cases or 'hibernate.dialect' when a custom Dialect implementation must be provided)
