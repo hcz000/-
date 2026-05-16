@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.7
+
+FROM ghcr.io/graalvm/native-image-community:21 AS builder
+WORKDIR /workspace
+ARG NATIVE_IMAGE_XMX=5g
+
+# Copy minimal files first for better layer cache.
+COPY .mvn ./.mvn
+COPY mvnw pom.xml ./
+RUN chmod +x mvnw
+
+# Download dependencies first.
+RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -DskipTests dependency:go-offline
+
+# Build native executable.
+COPY src ./src
+RUN --mount=type=cache,target=/root/.m2 ./mvnw -q -Pnative -DskipTests "-Dnative-image.args=-J-Xmx${NATIVE_IMAGE_XMX}" native:compile-no-fork
+RUN bin="$(find target -maxdepth 1 -type f -executable | head -n 1)" \
+    && test -n "$bin" \
+    && cp "$bin" /workspace/app
+
+FROM debian:bookworm-slim
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/app /app/app
+EXPOSE 8080
+
+ENTRYPOINT ["/app/app"]

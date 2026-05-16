@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 定义日志文件路径 -->
+    <property name="LOG_PATH" value="./logs"/>
+    <property name="APP_NAME" value="knowledge-planet"/>
+
+    <!-- 控制台输出，带 traceId -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 文件输出，带 traceId -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${APP_NAME}.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${APP_NAME}.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <maxFileSize>100MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+        </rollingPolicy>
+    </appender>
+
+    <!-- 错误日志单独输出 -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH}/${APP_NAME}-error.log</file>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{traceId:-}] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH}/${APP_NAME}-error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxHistory>60</maxHistory>
+            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <maxFileSize>50MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+        </rollingPolicy>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <!-- 异步输出，提高性能 -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <discardingThreshold>0</discardingThreshold>
+        <queueSize>512</queueSize>
+        <appender-ref ref="FILE"/>
+    </appender>
+
+    <!-- 应用日志级别 -->
+    <logger name="com.example.demo" level="INFO"/>
+    <!-- 高频定时任务/Buffer 日志 -->
+    <logger name="com.example.demo.service.UserVectorBufferService" level="WARN"/>
+    <logger name="com.example.demo.task.UserVectorFlushTask" level="WARN"/>
+    <logger name="com.example.demo.task.LikeBufferTrigger" level="WARN"/>
+    <logger name="com.example.demo.task.ReplyCountBufferTrigger" level="WARN"/>
+    <!-- RabbitMQ 监听器 -->
+    <logger name="com.example.demo.task.LikeSyncMessageListener" level="WARN"/>
+    <logger name="com.example.demo.task.LikeUserSyncMessageListener" level="WARN"/>
+    <logger name="com.example.demo.task.NotificationMessageListener" level="WARN"/>
+    <logger name="com.example.demo.task.SecondaryCommentCleanupListener" level="WARN"/>
+
+    <!-- 框架日志级别 -->
+    <logger name="org.springframework" level="INFO"/>
+    <logger name="org.springframework.amqp" level="WARN"/>
+    <logger name="org.hibernate" level="WARN"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+    <logger name="com.baomidou.mybatisplus" level="INFO"/>
+    <logger name="io.lettuce" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <logger name="org.apache.kafka" level="WARN"/>
+
+    <!-- 根日志配置 -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
+    </root>
+</configuration>

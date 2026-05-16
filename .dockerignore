@@ -1,0 +1,15 @@
+.git
+.idea
+.vscode
+
+target
+logs
+
+web/node_modules
+web/dist
+admin/node_modules
+admin/dist
+
+*.log
+*.tmp
+*.swp

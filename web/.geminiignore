@@ -1,0 +1,50 @@
+# --- 依赖与编译产物 (最吃 Token 的元凶) ---
+node_modules/
+dist/
+build/
+out/
+target/
+.gradle/
+.mvn/
+
+# --- IDE 与系统文件 ---
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# --- 版本控制 ---
+.git/
+.gitignore
+.hg/
+.svn/
+
+# --- 静态资源 (AI 不需要读取二进制图片/字体) ---
+**/*.jpg
+**/*.jpeg
+**/*.png
+**/*.gif
+**/*.svg
+**/*.ico
+**/*.woff
+**/*.woff2
+**/*.ttf
+**/*.eot
+**/*.mp4
+**/*.mp3
+
+# --- 锁定文件与配置 (减少干扰) ---
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+composer.lock
+*.log
+.env
+.cache/
+.npm/
+
+# --- 排除 Java 编译后的字节码 (针对你的 Java 项目) ---
+**/*.class
+**/*.jar
+**/*.war
