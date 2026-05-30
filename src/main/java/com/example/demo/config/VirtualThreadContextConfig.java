@@ -1,79 +1,61 @@
 package com.example.demo.config;
 
 import brave.propagation.CurrentTraceContext;
+import io.micrometer.context.ContextExecutorService;
+import io.micrometer.context.ContextRegistry;
+import io.micrometer.context.ContextScheduledExecutorService;
+import io.micrometer.context.ContextSnapshotFactory;
+import io.micrometer.context.integration.Slf4jThreadLocalAccessor;
+import io.micrometer.observation.ObservationRegistry;
+import io.micrometer.observation.contextpropagation.ObservationThreadLocalAccessor;
 import io.micrometer.tracing.Tracer;
-import org.slf4j.MDC;
+import io.micrometer.tracing.contextpropagation.ObservationAwareBaggageThreadLocalAccessor;
+import io.micrometer.tracing.contextpropagation.ObservationAwareSpanThreadLocalAccessor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.TaskDecorator;
 import org.springframework.core.task.support.ContextPropagatingTaskDecorator;
 
-import java.util.Map;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
-/**
- * 虚拟线程全局上下文传播配置
- * <p>
- * 解决虚拟线程中 ThreadLocal（TraceContext、MDC）上下文丢失问题
- * 所有虚拟线程自动传播链路追踪上下文
- */
 @Configuration
 public class VirtualThreadContextConfig {
 
-    /**
-     * 全局 TaskDecorator
-     * Spring 会自动应用到 @Async、@Scheduled、RabbitMQ 等
-     */
     @Bean
-    public TaskDecorator taskDecorator(CurrentTraceContext currentTraceContext) {
-        return new ContextPropagatingTaskDecorator();
+    public TaskDecorator taskDecorator(CurrentTraceContext currentTraceContext, ContextSnapshotFactory contextSnapshotFactory) {
+        return new ContextPropagatingTaskDecorator(contextSnapshotFactory);
     }
 
-    /**
-     * 带上下文传播的虚拟线程执行器
-     * 用于 CompletableFuture.supplyAsync 等
-     */
-    @Bean("virtualThreadExecutor")
-    public Executor virtualThreadExecutor(Tracer tracer) {
-        Executor delegate = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory());
-        return new ContextPropagatingExecutor(delegate, tracer);
+    @Bean
+    public ContextSnapshotFactory contextSnapshotFactory(ContextRegistry contextRegistry) {
+        return ContextSnapshotFactory.builder().contextRegistry(contextRegistry).build();
     }
 
-    /**
-     * 自定义上下文传播执行器
-     */
-    public static class ContextPropagatingExecutor implements Executor {
-        private final Executor delegate;
-        private final Tracer tracer;
+    @Bean
+    public ContextRegistry contextRegistry(ObservationRegistry observationRegistry, Tracer tracer) {
+        ContextRegistry registry = new ContextRegistry();
+        registry.registerThreadLocalAccessor(new ObservationThreadLocalAccessor(observationRegistry));
+        registry.registerThreadLocalAccessor(new ObservationAwareSpanThreadLocalAccessor(observationRegistry, tracer));
+        registry.registerThreadLocalAccessor(new ObservationAwareBaggageThreadLocalAccessor(observationRegistry, tracer));
+        registry.registerThreadLocalAccessor(new Slf4jThreadLocalAccessor());
+        return registry;
+    }
 
-        public ContextPropagatingExecutor(Executor delegate, Tracer tracer) {
-            this.delegate = delegate;
-            this.tracer = tracer;
-        }
+    @Bean(name = "virtualThreadExecutor", destroyMethod = "shutdown")
+    public ExecutorService virtualThreadExecutor(ContextSnapshotFactory contextSnapshotFactory) {
+        ExecutorService delegate = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("app-vt-", 0).factory());
+        return ContextExecutorService.wrap(delegate, contextSnapshotFactory);
+    }
 
-        @Override
-        public void execute(Runnable command) {
-            // 捕获当前上下文
-            var currentSpan = tracer.currentSpan();
-            Map<String, String> mdcContext = MDC.getCopyOfContextMap();
-
-            delegate.execute(() -> {
-                // 在新线程中恢复上下文
-                var spanInScope = currentSpan != null ? tracer.withSpan(currentSpan) : null;
-                if (mdcContext != null) {
-                    MDC.setContextMap(mdcContext);
-                }
-
-                try {
-                    command.run();
-                } finally {
-                    if (spanInScope != null) {
-                        spanInScope.close();
-                    }
-                    MDC.clear();
-                }
-            });
-        }
+    @Bean(destroyMethod = "shutdown")
+    public ScheduledExecutorService virtualThreadSchedulerExecutor(ContextSnapshotFactory contextSnapshotFactory) {
+        int poolSize = Math.max(4, Runtime.getRuntime().availableProcessors());
+        ScheduledExecutorService delegate = Executors.newScheduledThreadPool(
+                poolSize,
+                Thread.ofVirtual().name("sched-vt-", 0).factory());
+        return ContextScheduledExecutorService.wrap(delegate, contextSnapshotFactory);
     }
 }

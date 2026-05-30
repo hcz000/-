@@ -14,7 +14,7 @@ const http = axios.create({
 http.interceptors.request.use(
   (config) => {
     // 添加 token（Sa-Token 不需要 Bearer 前缀）
-    const token = localStorage.getItem('adminToken')
+    const token = localStorage.getItem('kp:token')
     if (token) {
       config.headers['Authorization'] = token
     }
@@ -60,7 +60,7 @@ http.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           ElMessage.error('未授权，请重新登录')
-          localStorage.removeItem('adminToken')
+          localStorage.removeItem('kp:token')
           window.location.href = '/login'
           break
         case 403:

@@ -2,44 +2,33 @@ package com.example.demo.service;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.example.demo.entity.Postings;
-import com.example.demo.enums.PostingType;
 import com.example.demo.repository.PostingsRepository;
+import com.example.demo.service.recommend.RecommendStrategy;
+import com.example.demo.service.recommend.RecommendStrategy.StrategyResult;
 import jakarta.annotation.Resource;
-import jakarta.persistence.criteria.Predicate;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+/**
+ * 推荐协调服务
+ * 负责认证校验、缓存、超时降级等编排逻辑，核心算法委托给 {@link RecommendStrategy}
+ */
 @Slf4j
 @Service
 public class PushService {
 
-    private static final String DAILY_POSTS_KEY = "push:posts:daily";
-    private static final String WEEKLY_POSTS_KEY = "push:posts:weekly";
     private static final String USER_PUSH_KEY_PREFIX = "push:user:";
-    private static final String REBUILD_LOCK_KEY_PREFIX = "push:lock:";
-
-    private static final long CACHE_EXPIRE_HOURS = 1;
     private static final long USER_PUSH_CACHE_SECONDS = 30;
-    private static final long REBUILD_LOCK_SECONDS = 10;
-
     private static final int TOTAL_PUSH_COUNT = 10;
-    private static final int TYPE_CACHE_CANDIDATE_SIZE = 200;
-    private static final int DEFAULT_CACHE_CANDIDATE_SIZE = 300;
     private static final int PUSH_TIMEOUT_MS = 250;
 
     @Resource
@@ -51,13 +40,40 @@ public class PushService {
     @Resource
     private UserVectorService userVectorService;
 
+    @Resource
+    @Qualifier("virtualThreadExecutor")
+    private Executor virtualThreadExecutor;
+
+    @Resource
+    private Map<String, RecommendStrategy> strategies;
+
+    @Resource
+    @Qualifier("interestStrategy")
+    private RecommendStrategy interestStrategy;
+
+    @Resource
+    @Qualifier("randomStrategy")
+    private RecommendStrategy randomStrategy;
+
+    /**
+     * 当前激活的推荐策略名称，通过 application.yml 配置
+     */
+    @Value("${app.recommend.strategy:interestStrategy}")
+    private String activeStrategyName;
+
+    // ===== 对外 API =====
+
+    /**
+     * 随机推送（兜底策略）
+     */
     public List<Postings> push() {
-        List<Long> mergedIds = new ArrayList<>(TOTAL_PUSH_COUNT + 2);
-        mergedIds.addAll(getRandomIdsFromCache(DAILY_POSTS_KEY, 4, 1));
-        mergedIds.addAll(getRandomIdsFromCache(WEEKLY_POSTS_KEY, 6, 7));
-        return materializeByOrderedIds(mergedIds, TOTAL_PUSH_COUNT, "push.random");
+        StrategyResult result = randomStrategy.recommend(null, TOTAL_PUSH_COUNT);
+        return materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT, "push.random");
     }
 
+    /**
+     * 首页智能推送：根据登录状态和用户向量稳定性选择策略
+     */
     public List<Postings> pushForCurrentUser() {
         if (!StpUtil.isLogin()) {
             return push();
@@ -67,6 +83,7 @@ public class PushService {
             return push();
         }
 
+        // 检查用户缓存
         String userPushCacheKey = USER_PUSH_KEY_PREFIX + userId;
         List<Postings> cached = getUserPushFromCache(userPushCacheKey);
         if (!cached.isEmpty()) {
@@ -76,18 +93,25 @@ public class PushService {
 
         long startNs = System.nanoTime();
         try {
+            Long currentUserId = userId;
+            RecommendStrategy active = getActiveStrategy();
             List<Postings> personalized = CompletableFuture
-                    .supplyAsync(this::likepush)
+                    .supplyAsync(() -> {
+                        StrategyResult result = active.recommend(currentUserId, TOTAL_PUSH_COUNT);
+                        return materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT,
+                                "push.a:" + result.strategyName());
+                    }, virtualThreadExecutor)
                     .orTimeout(PUSH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(ex -> {
-                        log.warn("[push.a] personalized timeout/fail userId={}, fallback=random, reason={}",
-                                userId, ex.toString());
-                        return push();
+                        log.warn("[push.a] strategy timeout/fail userId={}, strategy={}, fallback=random, reason={}",
+                                userId, active.getName(), ex.toString());
+                        StrategyResult fallback = randomStrategy.recommend(currentUserId, TOTAL_PUSH_COUNT);
+                        return materializeByOrderedIds(fallback.postIds(), TOTAL_PUSH_COUNT, "push.a:fallback");
                     })
                     .join();
             cacheUserPush(userPushCacheKey, personalized);
-            log.info("[push.a] done userId={}, total={}ms, resultSize={}",
-                    userId, elapsedMs(startNs), personalized.size());
+            log.info("[push.a] done userId={}, strategy={}, cost={}ms, resultSize={}",
+                    userId, active.getName(), elapsedMs(startNs), personalized.size());
             return personalized;
         } catch (Exception e) {
             log.warn("[push.a] unexpected error userId={}, fallback=random", userId, e);
@@ -95,188 +119,47 @@ public class PushService {
         }
     }
 
+    /**
+     * 按兴趣推送（内部使用，供 Controller 暴露）
+     */
     public List<Postings> likepush() {
-        long totalStart = System.nanoTime();
-
         if (!StpUtil.isLogin()) {
             return push();
         }
-        Long userId = StpUtil.getLoginIdAsLong();
-
-        long vectorStart = System.nanoTime();
-        List<UserVectorService.TypeRatio> ratios = userVectorService.getTypeRatios(userId);
-        long vectorCost = elapsedMs(vectorStart);
-
-        log.info("user {} type ratios: {}", userId,
-                ratios.stream().map(r -> r.typeName() + "=" + (int) (r.ratio() * 100) + "%").toList());
-
-        List<Long> mergedIds = new ArrayList<>(TOTAL_PUSH_COUNT * 2);
-        Set<Long> seenIds = new HashSet<>(TOTAL_PUSH_COUNT * 2);
-
-        int interestCount = 0;
-        List<Integer> typeCounts = new ArrayList<>();
-        for (UserVectorService.TypeRatio ratio : ratios) {
-            int count = (int) (ratio.ratio() * TOTAL_PUSH_COUNT);
-            typeCounts.add(count);
-            interestCount += count;
-        }
-
-        log.info("interest allocation={}, random补位={}", interestCount, TOTAL_PUSH_COUNT - interestCount);
-
-        long typedStart = System.nanoTime();
-        for (int i = 0; i < ratios.size(); i++) {
-            UserVectorService.TypeRatio ratio = ratios.get(i);
-            int count = typeCounts.get(i);
-            if (count <= 0) {
-                continue;
-            }
-
-            PostingType type = ratio.type();
-            String typeCacheKey = "push:posts:type:" + type.getTypeName();
-
-            List<Long> typeIds = getPostIdsByTypeFromCache(typeCacheKey, type, count);
-            for (Long id : typeIds) {
-                if (id == null) {
-                    continue;
-                }
-                if (seenIds.add(id)) {
-                    mergedIds.add(id);
-                }
-            }
-        }
-        long typedCost = elapsedMs(typedStart);
-
-        int remaining = TOTAL_PUSH_COUNT - mergedIds.size();
-        long randomStart = System.nanoTime();
-        if (remaining > 0) {
-            List<Long> randomIds = getRandomIdsFromCache(WEEKLY_POSTS_KEY, remaining * 2, 7);
-            for (Long id : randomIds) {
-                if (id == null) {
-                    continue;
-                }
-                if (seenIds.add(id) && mergedIds.size() < TOTAL_PUSH_COUNT) {
-                    mergedIds.add(id);
-                }
-            }
-        }
-        long randomCost = elapsedMs(randomStart);
-
-        List<Postings> result = materializeByOrderedIds(mergedIds, TOTAL_PUSH_COUNT, "push.a");
-        log.info("[push.a] perf userId={}, vector={}ms, typed={}ms, randomFill={}ms, total={}ms, finalSize={}",
-                userId, vectorCost, typedCost, randomCost, elapsedMs(totalStart), result.size());
-
-        return result;
+        return likepush(StpUtil.getLoginIdAsLong());
     }
 
-    private List<Long> getPostIdsByTypeFromCache(String cacheKey, PostingType type, int count) {
-        Long cacheSize = redisTemplate.opsForSet().size(cacheKey);
-
-        if (cacheSize == null || cacheSize < count * 2L) {
-            fillTypeCache(cacheKey, type);
+    /**
+     * 按用户 ID 兴趣推送（供 RabbitMQ 监听器等内部调用方使用）
+     */
+    public List<Postings> likepush(Long userId) {
+        if (userId == null) {
+            return push();
         }
-
-        Set<Object> ids = redisTemplate.opsForSet().distinctRandomMembers(cacheKey, count);
-        if (ids == null || ids.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return parseIds(ids);
-    }
-
-    private void fillTypeCache(String cacheKey, PostingType type) {
-        if (!acquireRebuildLock(cacheKey)) {
-            return;
-        }
-
         long startNs = System.nanoTime();
-        LocalDateTime startTime = LocalDateTime.now().minusDays(7);
-
-        Specification<Postings> spec = (root, query, cb) -> {
-            Predicate predicate = cb.conjunction();
-            predicate = cb.and(predicate, cb.greaterThanOrEqualTo(root.get("createTime"), startTime));
-            predicate = cb.and(predicate, cb.equal(root.get("deleted"), false));
-            predicate = cb.and(predicate, cb.equal(root.get("status"), 1));
-            predicate = cb.and(predicate, cb.equal(root.get("auditStatus"), 1));
-            predicate = cb.and(predicate, cb.equal(root.get("type"), type.getTypeName()));
-            return predicate;
-        };
-
-        List<Postings> posts = postingsRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createTime"));
-        if (posts.isEmpty()) {
-            return;
-        }
-
-        if (posts.size() > TYPE_CACHE_CANDIDATE_SIZE) {
-            posts = posts.subList(0, TYPE_CACHE_CANDIDATE_SIZE);
-        }
-
-        Long[] ids = posts.stream()
-                .map(Postings::getPostingsId)
-                .toArray(Long[]::new);
-
-        redisTemplate.delete(cacheKey);
-        redisTemplate.opsForSet().add(cacheKey, (Object[]) ids);
-        redisTemplate.expire(cacheKey, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
-        log.info("fill type cache {}: {} ids (type={}, cost={}ms)",
-                cacheKey, ids.length, type.getTypeName(), elapsedMs(startNs));
+        StrategyResult result = interestStrategy.recommend(userId, TOTAL_PUSH_COUNT);
+        List<Postings> posts = materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT, "push.a:interest");
+        log.info("[push.a:interest] userId={}, strategy={}, cost={}ms, finalSize={}",
+                userId, result.strategyName(), elapsedMs(startNs), posts.size());
+        return posts;
     }
 
-    private List<Long> getRandomIdsFromCache(String key, int count, int days) {
-        Long cacheSize = redisTemplate.opsForSet().size(key);
+    // ===== 策略选择 =====
 
-        if (cacheSize == null || cacheSize < count * 3L) {
-            log.info("cache insufficient, lazy refill: {}", key);
-            fillCache(key, days);
+    /**
+     * 根据配置获取当前激活的推荐策略
+     */
+    private RecommendStrategy getActiveStrategy() {
+        RecommendStrategy strategy = strategies.get(activeStrategyName);
+        if (strategy == null) {
+            log.warn("Unknown strategy '{}', fallback to interestStrategy", activeStrategyName);
+            return interestStrategy;
         }
-
-        Set<Object> ids = redisTemplate.opsForSet().distinctRandomMembers(key, count);
-        if (ids == null || ids.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return parseIds(ids);
+        log.debug("[push.a] active strategy: {}", strategy.getName());
+        return strategy;
     }
 
-    private void fillCache(String key, int days) {
-        if (!acquireRebuildLock(key)) {
-            return;
-        }
-
-        long startNs = System.nanoTime();
-        LocalDateTime startTime = LocalDateTime.now().minusDays(days);
-
-        Specification<Postings> spec = (root, query, cb) -> {
-            Predicate predicate = cb.conjunction();
-            predicate = cb.and(predicate, cb.greaterThanOrEqualTo(root.get("createTime"), startTime));
-            predicate = cb.and(predicate, cb.equal(root.get("deleted"), false));
-            predicate = cb.and(predicate, cb.equal(root.get("status"), 1));
-            predicate = cb.and(predicate, cb.equal(root.get("auditStatus"), 1));
-            return predicate;
-        };
-
-        List<Postings> posts = postingsRepository.findAll(spec, Sort.by(Sort.Direction.DESC, "createTime"));
-        if (posts.isEmpty()) {
-            return;
-        }
-
-        if (posts.size() > DEFAULT_CACHE_CANDIDATE_SIZE) {
-            posts = posts.subList(0, DEFAULT_CACHE_CANDIDATE_SIZE);
-        }
-
-        Long[] ids = posts.stream()
-                .map(Postings::getPostingsId)
-                .toArray(Long[]::new);
-
-        redisTemplate.delete(key);
-        redisTemplate.opsForSet().add(key, (Object[]) ids);
-        redisTemplate.expire(key, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
-        log.info("fill cache {}: {} ids, cost={}ms", key, ids.length, elapsedMs(startNs));
-    }
-
-    private boolean acquireRebuildLock(String cacheKey) {
-        String lockKey = REBUILD_LOCK_KEY_PREFIX + cacheKey;
-        Boolean locked = redisTemplate.opsForValue()
-                .setIfAbsent(lockKey, "1", REBUILD_LOCK_SECONDS, TimeUnit.SECONDS);
-        return Boolean.TRUE.equals(locked);
-    }
+    // ===== 通用工具方法 =====
 
     private long elapsedMs(long startNs) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
@@ -285,7 +168,7 @@ public class PushService {
     private List<Postings> loadPostsByIdsTimed(List<Long> idList, String sourceKey) {
         long startNs = System.nanoTime();
         List<Postings> posts = postingsRepository.findAllById(idList);
-        log.debug("[push.a] loadByIds source={}, size={}, cost={}ms", sourceKey, idList.size(), elapsedMs(startNs));
+        log.debug("[push] loadByIds source={}, size={}, cost={}ms", sourceKey, idList.size(), elapsedMs(startNs));
         return posts;
     }
 
@@ -296,13 +179,9 @@ public class PushService {
         List<Long> dedupOrdered = new ArrayList<>(Math.min(orderedIds.size(), maxCount));
         Set<Long> seen = new HashSet<>(orderedIds.size());
         for (Long id : orderedIds) {
-            if (id == null || !seen.add(id)) {
-                continue;
-            }
+            if (id == null || !seen.add(id)) continue;
             dedupOrdered.add(id);
-            if (dedupOrdered.size() >= maxCount) {
-                break;
-            }
+            if (dedupOrdered.size() >= maxCount) break;
         }
         if (dedupOrdered.isEmpty()) {
             return Collections.emptyList();
@@ -312,7 +191,7 @@ public class PushService {
             return Collections.emptyList();
         }
         List<Postings> result = new ArrayList<>(rows.size());
-        java.util.Map<Long, Postings> postMap = new java.util.HashMap<>(rows.size());
+        Map<Long, Postings> postMap = new HashMap<>(rows.size());
         for (Postings row : rows) {
             if (row != null && row.getPostingsId() != null) {
                 postMap.put(row.getPostingsId(), row);
@@ -325,20 +204,6 @@ public class PushService {
             }
         }
         return result;
-    }
-
-    private List<Long> parseIds(Set<Object> ids) {
-        List<Long> parsed = new ArrayList<>(ids.size());
-        for (Object id : ids) {
-            if (id == null) {
-                continue;
-            }
-            try {
-                parsed.add(Long.parseLong(id.toString()));
-            } catch (NumberFormatException ignored) {
-            }
-        }
-        return parsed;
     }
 
     private List<Postings> getUserPushFromCache(String userPushCacheKey) {

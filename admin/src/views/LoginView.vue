@@ -99,8 +99,8 @@ const handleLogin = async () => {
           }
         })
 
-        // 存储 token
-        localStorage.setItem('adminToken', token)
+        // 存储 token（与用户端保持一致）
+        localStorage.setItem('kp:token', token)
         ElMessage.success('登录成功')
         router.push('/dashboard')
       } catch (error) {

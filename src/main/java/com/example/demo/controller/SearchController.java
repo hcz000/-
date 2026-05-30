@@ -19,10 +19,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-/**
- * 搜索控制器
- */
-@Api(tags = "搜索", description = "提供全局搜索、并行搜索等功能")
+@Api(tags = "搜索", description = "提供全局搜索和并行搜索能力")
 @RestController
 @RequestMapping("/search")
 public class SearchController {
@@ -34,9 +31,6 @@ public class SearchController {
     @Qualifier("virtualThreadExecutor")
     private Executor virtualThreadExecutor;
 
-    /**
-     * 同步搜索 - 同时查询帖子、星球、用户
-     */
     @GetMapping("/all")
     public SaResult searchAll(@RequestParam String keyword,
                               @RequestParam(required = false) Integer page,
@@ -48,8 +42,7 @@ public class SearchController {
     }
 
     /**
-     * 并行搜索 - 使用虚拟线程并行查询帖子、星球、用户
-     * 使用注入的 virtualThreadExecutor 自动传播链路追踪上下文
+     * 使用虚拟线程并发查询帖子、星球和用户三类结果。
      */
     @GetMapping("/async")
     public SaResult searchAllAsync(@RequestParam String keyword,
@@ -57,6 +50,7 @@ public class SearchController {
                                    @RequestParam(required = false) Integer size) {
         int p = PageParamUtil.resolvePage(page, null);
         int s = PageParamUtil.resolveSize(size, null, 10, 100);
+
         CompletableFuture<List<SearchResult>> postsFuture = CompletableFuture.supplyAsync(
                 () -> searchService.searchByBizType("post", keyword, p, s), virtualThreadExecutor);
         CompletableFuture<List<SearchResult>> planetsFuture = CompletableFuture.supplyAsync(
@@ -66,21 +60,14 @@ public class SearchController {
 
         CompletableFuture.allOf(postsFuture, planetsFuture, usersFuture).join();
 
-        List<SearchResult> posts = postsFuture.join();
-        List<SearchResult> planets = planetsFuture.join();
-        List<SearchResult> users = usersFuture.join();
-
         Map<String, Object> result = new HashMap<>();
-        result.put("posts", posts);
-        result.put("planets", planets);
-        result.put("users", users);
+        result.put("posts", postsFuture.join());
+        result.put("planets", planetsFuture.join());
+        result.put("users", usersFuture.join());
 
         return SaResult.ok().setData(result);
     }
 
-    /**
-     * 按业务类型搜索
-     */
     @GetMapping("/biz/{bizType}")
     public SaResult searchByBizType(@PathVariable String bizType,
                                     @RequestParam String keyword,

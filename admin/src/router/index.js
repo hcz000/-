@@ -68,7 +68,7 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - 后台管理系统` : '后台管理系统'
   
-  const token = localStorage.getItem('adminToken')
+  const token = localStorage.getItem('kp:token')
   
   if (to.path === '/login') {
     next()

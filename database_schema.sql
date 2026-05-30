@@ -1,8 +1,8 @@
 -- ========================================
 -- KnowledgePlanet PostgreSQL 完整建表脚本
 -- 版本：1.1
--- 说明：包含所有表结构、索引、触发器、全文搜索
--- 注意：全文搜索使用 zhparser 中文分词扩展，需先 CREATE EXTENSION zhparser;
+-- 说明：包含所有表结构、索引、触发器
+-- 注意：搜索使用 ILIKE + pg_trgm 模糊匹配，无需额外扩展
 -- ========================================
 CREATE DATABASE knowledge_planet;
 -- ========================================
@@ -19,41 +19,15 @@ CREATE TABLE IF NOT EXISTS users (
     liketype REAL[] DEFAULT ARRAY[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]::REAL[], -- 用户兴趣向量（8维数组）
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted BOOLEAN DEFAULT FALSE,
-
-    -- 全文搜索向量列（username + email）
-    search_vector tsvector
+    deleted BOOLEAN DEFAULT FALSE
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
--- GIN 索引：全文搜索
-CREATE INDEX IF NOT EXISTS idx_users_fulltext_gin ON users USING gin(search_vector);
-
--- 用户全文搜索触发器
-CREATE OR REPLACE FUNCTION update_users_search_vector()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' OR
-       (NEW.username IS DISTINCT FROM OLD.username) OR
-       (NEW.email IS DISTINCT FROM OLD.email) THEN
-        NEW.search_vector := to_tsvector('zh', coalesce(NEW.username, '') || ' ' || coalesce(NEW.email, ''));
-    END IF;
-    NEW.update_time := CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS users_search_vector_trigger ON users;
-CREATE TRIGGER users_search_vector_trigger
-BEFORE INSERT OR UPDATE ON users
-FOR EACH ROW EXECUTE FUNCTION update_users_search_vector();
-
 COMMENT ON TABLE users IS '用户表';
 COMMENT ON COLUMN users.role IS '用户角色：user-普通用户, admin-管理员';
-COMMENT ON COLUMN users.search_vector IS '全文搜索向量（username + email）';
 
 -- ========================================
 -- Part 2: 星球模块
@@ -70,46 +44,15 @@ CREATE TABLE IF NOT EXISTS planet (
     deleted BOOLEAN DEFAULT FALSE,
     description TEXT,
     category VARCHAR(64),
-    status INTEGER,                             -- 星球状态
-
-    -- 全文搜索向量列（name + description + category）
-    search_vector tsvector
+    status INTEGER                              -- 星球状态
 );
 
 CREATE INDEX IF NOT EXISTS idx_planet_deleted ON planet(deleted);
 CREATE INDEX IF NOT EXISTS idx_planet_name ON planet(name);
 CREATE INDEX IF NOT EXISTS idx_planet_master ON planet(master);
 
--- GIN 索引：全文搜索
-CREATE INDEX IF NOT EXISTS idx_planet_fulltext_gin ON planet USING gin(search_vector);
-
--- 星球全文搜索触发器
-CREATE OR REPLACE FUNCTION update_planet_search_vector()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' OR
-       (NEW.name IS DISTINCT FROM OLD.name) OR
-       (NEW.description IS DISTINCT FROM OLD.description) OR
-       (NEW.category IS DISTINCT FROM OLD.category) THEN
-        NEW.search_vector := to_tsvector('zh',
-            coalesce(NEW.name, '') || ' ' ||
-            coalesce(NEW.description, '') || ' ' ||
-            coalesce(NEW.category, '')
-        );
-    END IF;
-    NEW.update_time := CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS planet_search_vector_trigger ON planet;
-CREATE TRIGGER planet_search_vector_trigger
-BEFORE INSERT OR UPDATE ON planet
-FOR EACH ROW EXECUTE FUNCTION update_planet_search_vector();
-
 COMMENT ON TABLE planet IS '星球表';
 COMMENT ON COLUMN planet.member_count IS '成员数缓存';
-COMMENT ON COLUMN planet.search_vector IS '全文搜索向量（name + description + category）';
 
 -- 2b. 星球-用户成员关系表（planet_member）
 -- 替代原有的 users.join_planet（JSONB）和 planet.member（JSONB）
@@ -149,10 +92,7 @@ CREATE TABLE IF NOT EXISTS postings (
     update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     deleted BOOLEAN DEFAULT FALSE,
     user_id BIGINT NOT NULL,
-    first_comment_id BIGINT,
-
-    -- 全文搜索向量列（title + content）
-    search_vector tsvector
+    first_comment_id BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_postings_deleted ON postings(deleted);
@@ -163,32 +103,9 @@ CREATE INDEX IF NOT EXISTS idx_postings_create_time ON postings(create_time DESC
 CREATE INDEX IF NOT EXISTS idx_postings_images ON postings USING gin(images);
 CREATE INDEX IF NOT EXISTS idx_postings_audit_status ON postings(audit_status);
 
--- GIN 索引：全文搜索（核心）
-CREATE INDEX IF NOT EXISTS idx_postings_fulltext_gin ON postings USING gin(search_vector);
-
--- 帖子全文搜索触发器
-CREATE OR REPLACE FUNCTION update_postings_search_vector()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' OR
-       (NEW.title IS DISTINCT FROM OLD.title) OR
-       (NEW.content IS DISTINCT FROM OLD.content) THEN
-        NEW.search_vector := to_tsvector('zh', coalesce(NEW.title, '') || ' ' || coalesce(NEW.content, ''));
-    END IF;
-    NEW.update_time := CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS postings_search_vector_trigger ON postings;
-CREATE TRIGGER postings_search_vector_trigger
-BEFORE INSERT OR UPDATE ON postings
-FOR EACH ROW EXECUTE FUNCTION update_postings_search_vector();
-
 COMMENT ON TABLE postings IS '帖子表';
 COMMENT ON COLUMN postings.images IS '帖子图片URL列表（JSONB数组）';
 COMMENT ON COLUMN postings.audit_status IS '审核状态：0-待审核, 1-已通过, 2-已拒绝';
-COMMENT ON COLUMN postings.search_vector IS '全文搜索向量（title + content）';
 
 -- 4. 一级评论表（primary_comment）
 CREATE TABLE IF NOT EXISTS primary_comment (
@@ -383,10 +300,8 @@ UNION ALL SELECT 'report', COUNT(*) FROM report;
 -- ========================================
 -- 执行此脚本后，数据库具备：
 -- 1. ✅ 12张核心业务表
--- 2. ✅ 全文搜索倒排索引（GIN）- users, planet, postings
--- 3. ✅ 关系表替代 JSONB（planet_member 替代 users.join_planet / planet.member）
--- 4. ✅ 条件触发的搜索向量更新（仅相关字段变化时重算）
--- 5. ✅ 规范的时间字段（TIMESTAMP）
--- 6. ✅ 合理的数据类型（BOOLEAN、BIGINT、JSONB）
--- 7. ✅ 完整的索引与约束覆盖（UNIQUE、CHECK、外键逻辑）
--- 8. ✅ 举报管理功能
+-- 2. ✅ 关系表替代 JSONB（planet_member 替代 users.join_planet / planet.member）
+-- 3. ✅ 规范的时间字段（TIMESTAMP）
+-- 4. ✅ 合理的数据类型（BOOLEAN、BIGINT、JSONB）
+-- 5. ✅ 完整的索引与约束覆盖（UNIQUE、CHECK、外键逻辑）
+-- 6. ✅ 举报管理功能

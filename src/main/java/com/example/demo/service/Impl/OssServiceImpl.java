@@ -2,7 +2,14 @@ package com.example.demo.service.Impl;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
-import com.aliyun.oss.model.*;
+import com.aliyun.oss.model.CompleteMultipartUploadRequest;
+import com.aliyun.oss.model.InitiateMultipartUploadRequest;
+import com.aliyun.oss.model.InitiateMultipartUploadResult;
+import com.aliyun.oss.model.ObjectMetadata;
+import com.aliyun.oss.model.PartETag;
+import com.aliyun.oss.model.PutObjectRequest;
+import com.aliyun.oss.model.UploadPartRequest;
+import com.aliyun.oss.model.UploadPartResult;
 import com.example.demo.config.OssProperties;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.service.IOssService;
@@ -23,6 +30,9 @@ import java.util.concurrent.Executor;
 @Service
 public class OssServiceImpl implements IOssService {
 
+    private static final long PART_SIZE = 1024 * 1024;
+    private static final long LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
+
     @Resource
     private OssProperties ossProperties;
 
@@ -30,22 +40,11 @@ public class OssServiceImpl implements IOssService {
     @Qualifier("virtualThreadExecutor")
     private Executor virtualThreadExecutor;
 
-    /**
-     * 分片大小：1MB
-     */
-    private static final long PART_SIZE = 1024 * 1024;
-
-    /**
-     * 大文件阈值：超过此大小使用分片上传（5MB）
-     */
-    private static final long LARGE_FILE_THRESHOLD = 5 * 1024 * 1024;
-
     @Override
     public String uploadImage(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("上传文件不能为空");
         }
-        // 大文件使用分片上传
         if (file.getSize() > LARGE_FILE_THRESHOLD) {
             return uploadLargeFile(file);
         }
@@ -61,7 +60,6 @@ public class OssServiceImpl implements IOssService {
         OSS ossClient = createOssClient();
 
         try {
-            // 1. 初始化分片上传
             InitiateMultipartUploadRequest initRequest = new InitiateMultipartUploadRequest(
                     ossProperties.getBucketName(), objectName);
             if (StringUtils.hasText(file.getContentType())) {
@@ -69,20 +67,19 @@ public class OssServiceImpl implements IOssService {
                 metadata.setContentType(file.getContentType());
                 initRequest.setObjectMetadata(metadata);
             }
+
             InitiateMultipartUploadResult initResult = ossClient.initiateMultipartUpload(initRequest);
             String uploadId = initResult.getUploadId();
 
-            // 2. 计算分片数量
             long fileSize = file.getSize();
             int partCount = (int) (fileSize / PART_SIZE);
             if (fileSize % PART_SIZE != 0) {
                 partCount++;
             }
 
-            // 3. 并行上传分片（使用虚拟线程）
-            List<PartETag> partETags = uploadPartsParallel(ossClient, file, objectName, uploadId, partCount, fileSize);
+            List<PartETag> partETags = uploadPartsParallel(
+                    ossClient, file, objectName, uploadId, partCount, fileSize);
 
-            // 4. 完成分片上传
             CompleteMultipartUploadRequest completeRequest = new CompleteMultipartUploadRequest(
                     ossProperties.getBucketName(), objectName, uploadId, partETags);
             ossClient.completeMultipartUpload(completeRequest);
@@ -96,25 +93,21 @@ public class OssServiceImpl implements IOssService {
     }
 
     /**
-     * 并行上传分片（虚拟线程 + 自动上下文传播）
+     * 分片上传是典型的阻塞 IO 场景，适合直接用虚拟线程并发执行。
      */
     private List<PartETag> uploadPartsParallel(OSS ossClient, MultipartFile file,
-                                                String objectName, String uploadId,
-                                                int partCount, long fileSize) {
-        List<PartETag> partETags = new ArrayList<>(partCount);
-
+                                               String objectName, String uploadId,
+                                               int partCount, long fileSize) {
         List<CompletableFuture<PartETag>> futures = new ArrayList<>(partCount);
         for (int i = 0; i < partCount; i++) {
             int partNumber = i + 1;
             long startPos = i * PART_SIZE;
             long partSize = Math.min(PART_SIZE, fileSize - startPos);
 
-            // 使用注入的 virtualThreadExecutor，自动传播上下文
             CompletableFuture<PartETag> future = CompletableFuture.supplyAsync(() -> {
                 try (InputStream inputStream = file.getInputStream()) {
-                    // 跳过前面的字节，定位到当前分片的起始位置
                     inputStream.skip(startPos);
-                    
+
                     UploadPartRequest uploadPartRequest = new UploadPartRequest();
                     uploadPartRequest.setBucketName(ossProperties.getBucketName());
                     uploadPartRequest.setKey(objectName);
@@ -133,22 +126,16 @@ public class OssServiceImpl implements IOssService {
             futures.add(future);
         }
 
-        // 等待所有分片上传完成，任一失败则全部失败
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
+        List<PartETag> partETags = new ArrayList<>(partCount);
         for (CompletableFuture<PartETag> future : futures) {
             partETags.add(future.join());
         }
-
-        // 按分片号排序
         partETags.sort((a, b) -> a.getPartNumber() - b.getPartNumber());
-
         return partETags;
     }
 
-    /**
-     * 简单上传（小文件）
-     */
     private String uploadSimple(MultipartFile file) {
         String objectName = buildObjectName(file.getOriginalFilename());
         OSS ossClient = createOssClient();

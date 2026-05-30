@@ -2,15 +2,15 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export const useUserStore = defineStore('user', () => {
-  const token = ref(localStorage.getItem('adminToken') || '')
+  const token = ref(localStorage.getItem('kp:token') || '')
   const userInfo = ref(null)
 
   const setToken = (newToken) => {
     token.value = newToken
     if (newToken) {
-      localStorage.setItem('adminToken', newToken)
+      localStorage.setItem('kp:token', newToken)
     } else {
-      localStorage.removeItem('adminToken')
+      localStorage.removeItem('kp:token')
     }
   }
 
