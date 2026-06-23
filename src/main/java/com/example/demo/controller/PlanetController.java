@@ -5,11 +5,8 @@ import cn.dev33.satoken.util.SaResult;
 import com.example.demo.entity.Planet;
 import com.example.demo.service.IPlanetService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
-
-@Api(tags = "星球管理", description = "提供知识星球的创建、加入、退出、查询等功能")
 @RestController
 @RequestMapping("/planet")
 public class PlanetController {

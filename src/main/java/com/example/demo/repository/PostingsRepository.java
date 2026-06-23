@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
@@ -20,15 +21,15 @@ public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSp
     @Query(value = """
             SELECT postings_id, planet_id, title, content, user_id, status, reply_count, like_count,
                    first_comment_id, create_time, update_time, type, deleted, audit_status, images,
-                   GREATEST(similarity(coalesce(title, ''), :keyword),
-                            similarity(coalesce(content, ''), :keyword)) as relevance
+                   MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE) AS relevance
             FROM postings
             WHERE deleted = false
               AND status = 1
               AND audit_status = 1
               AND (
-                    coalesce(title, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(content, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR title LIKE CONCAT('%', :keyword, '%')
+                 OR content LIKE CONCAT('%', :keyword, '%')
               )
             ORDER BY relevance DESC, create_time DESC
             LIMIT :pageSize OFFSET :offset
@@ -47,12 +48,13 @@ public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSp
             LEFT JOIN planet pl ON pl.planet_id = p.planet_id AND pl.deleted = false
             WHERE p.deleted = false
               AND p.status = 1
+              AND p.audit_status = 1
               AND (
-                    coalesce(p.title, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(p.content, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(p.title, p.content) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR p.title LIKE CONCAT('%', :keyword, '%')
+                 OR p.content LIKE CONCAT('%', :keyword, '%')
               )
-            ORDER BY GREATEST(similarity(coalesce(p.title, ''), :keyword),
-                              similarity(coalesce(p.content, ''), :keyword)) DESC,
+            ORDER BY MATCH(p.title, p.content) AGAINST (:keyword IN NATURAL LANGUAGE MODE) DESC,
                      p.create_time DESC
             LIMIT :pageSize OFFSET :offset
             """, nativeQuery = true)
@@ -63,16 +65,16 @@ public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSp
     @Query(value = """
             SELECT postings_id, planet_id, title, content, user_id, status, reply_count, like_count,
                    first_comment_id, create_time, update_time, type, deleted, audit_status, images,
-                   GREATEST(similarity(coalesce(title, ''), :keyword),
-                            similarity(coalesce(content, ''), :keyword)) as relevance
+                   MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE) AS relevance
             FROM postings
             WHERE deleted = false
               AND status = 1
               AND audit_status = 1
               AND planet_id = :planetId
               AND (
-                    coalesce(title, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(content, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR title LIKE CONCAT('%', :keyword, '%')
+                 OR content LIKE CONCAT('%', :keyword, '%')
               )
             ORDER BY relevance DESC, create_time DESC
             LIMIT :pageSize OFFSET :offset
@@ -89,8 +91,9 @@ public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSp
               AND status = 1
               AND audit_status = 1
               AND (
-                    coalesce(title, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(content, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR title LIKE CONCAT('%', :keyword, '%')
+                 OR content LIKE CONCAT('%', :keyword, '%')
               )
             """, nativeQuery = true)
     Long countSearchResults(@Param("keyword") String keyword);
@@ -103,12 +106,48 @@ public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSp
               AND audit_status = 1
               AND planet_id = :planetId
               AND (
-                    coalesce(title, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(content, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(title, content) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR title LIKE CONCAT('%', :keyword, '%')
+                 OR content LIKE CONCAT('%', :keyword, '%')
               )
             """, nativeQuery = true)
     Long countSearchResultsByPlanet(@Param("keyword") String keyword, @Param("planetId") Long planetId);
 
-    @Query(value = "SELECT postings_id FROM postings TABLESAMPLE BERNOULLI(:samplePercent) LIMIT :limit", nativeQuery = true)
+    @Query(value = """
+            SELECT postings_id
+            FROM postings
+            WHERE deleted = false AND status = 1 AND audit_status = 1
+            ORDER BY RAND()
+            LIMIT :limit
+            """, nativeQuery = true)
     List<Long> samplePostIds(@Param("samplePercent") double samplePercent, @Param("limit") int limit);
+
+    @Query(value = """
+            SELECT postings_id
+            FROM postings
+            WHERE deleted = false AND status = 1 AND audit_status = 1
+            ORDER BY create_time DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findRecentLiveIds(@Param("limit") int limit);
+
+    @Query(value = """
+            SELECT postings_id
+            FROM postings
+            WHERE deleted = false AND status = 1 AND audit_status = 1
+              AND planet_id IN (:planetIds)
+            ORDER BY create_time DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findRecentLiveIdsByPlanetIds(@Param("planetIds") List<Long> planetIds, @Param("limit") int limit);
+
+    @Query(value = """
+            SELECT postings_id
+            FROM postings
+            WHERE deleted = false AND status = 1 AND audit_status = 1
+              AND user_id IN (:userIds)
+            ORDER BY create_time DESC
+            LIMIT :limit
+            """, nativeQuery = true)
+    List<Long> findRecentLiveIdsByUserIds(@Param("userIds") List<Long> userIds, @Param("limit") int limit);
 }

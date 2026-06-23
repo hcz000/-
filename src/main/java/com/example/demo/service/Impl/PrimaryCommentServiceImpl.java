@@ -3,7 +3,6 @@ package com.example.demo.service.Impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.example.demo.entity.Postings;
 import com.example.demo.entity.PrimaryComment;
-import com.example.demo.entity.SecondaryComment;
 import com.example.demo.enums.LikeBizType;
 import com.example.demo.enums.PostingType;
 import com.example.demo.exception.BusinessException;
@@ -17,12 +16,12 @@ import com.example.demo.service.IPrimaryCommentService;
 import com.example.demo.service.ISensitiveWordService;
 import com.example.demo.service.LikeService;
 import com.example.demo.service.UserVectorBufferService;
-import com.example.demo.task.CommentTopics;
 import com.example.demo.task.NotificationSender;
+import com.example.demo.task.PrimaryCommentDeletedEvent;
 import jakarta.annotation.Resource;
 import jakarta.persistence.criteria.Predicate;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -50,7 +49,7 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
     @Resource
     private IPostingsService postingsService;
     @Resource
-    private RabbitTemplate rabbitTemplate;
+    private ApplicationEventPublisher eventPublisher;
     @Resource
     private LikeService likeService;
     @Resource
@@ -73,7 +72,7 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
     private PrimaryCommentRepository primaryCommentRepository;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public PrimaryComment createComment(PrimaryComment comment) {
         validateComment(comment);
 
@@ -110,14 +109,16 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void removeComment(Long commentId) {
         PrimaryComment existing = getExistingComment(commentId);
         LocalDateTime now = LocalDateTime.now();
         existing.setDeleted(true);
         existing.setUpdateTime(now);
         primaryCommentRepository.save(existing);
-        rabbitTemplate.convertAndSend(CommentTopics.PRIMARY_COMMENT_DELETE, String.valueOf(commentId));
+        // 替代 RabbitMQ 的 primary-comment-delete 队列：发 Spring 事件，
+        // 由 @TransactionalEventListener(AFTER_COMMIT) 在事务提交后异步清理二级评论
+        eventPublisher.publishEvent(new PrimaryCommentDeletedEvent(commentId));
         commentCacheService.evictPrimary(commentId);
         postingsService.adjustReplyCount(existing.getPostingsId(), -1);
     }
@@ -139,6 +140,8 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
         Page<PrimaryComment> result = primaryCommentRepository.findAll(spec, pageable);
         Long firstCommentId = firstCommentService.getFirstCommentId(postingsId);
         Map<Long, Integer> repliesCountMap = loadSecondaryCountMap(result);
+        Map<Long, Integer> likeCountMap = likeService.getLikeCountMap(
+                LikeBizType.PRIMARY_COMMENT, collectPrimaryCommentIds(result));
         if (result != null && result.getContent() != null) {
             for (PrimaryComment record : result.getContent()) {
                 if (record == null) {
@@ -146,7 +149,7 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
                 }
                 boolean first = firstCommentId != null && firstCommentId.equals(record.getId());
                 record.setFirstComment(first);
-                record.setLikeCount(likeService.getLikeCount(LikeBizType.PRIMARY_COMMENT, record.getId()));
+                record.setLikeCount(likeCountMap.getOrDefault(record.getId(), 0));
                 record.setRepliesTotal(repliesCountMap.getOrDefault(record.getId(), 0));
             }
         }
@@ -242,19 +245,6 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
         return comment;
     }
 
-    private int countSecondaryComments(Long primaryCommentId) {
-        if (primaryCommentId == null) {
-            return 0;
-        }
-        Specification<SecondaryComment> spec = (root, query, cb) -> {
-            Predicate predicate = cb.conjunction();
-            predicate = cb.and(predicate, cb.equal(root.get("primaryCommentId"), primaryCommentId));
-            predicate = cb.and(predicate, cb.equal(root.get("deleted"), false));
-            return predicate;
-        };
-        return (int) secondaryCommentRepository.count(spec);
-    }
-
     private Map<Long, Integer> loadSecondaryCountMap(Page<PrimaryComment> page) {
         if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
             return Map.of();
@@ -277,6 +267,19 @@ public class PrimaryCommentServiceImpl implements IPrimaryCommentService {
             countMap.put(((Number) row[0]).longValue(), ((Number) row[1]).intValue());
         }
         return countMap;
+    }
+
+    private List<Long> collectPrimaryCommentIds(Page<PrimaryComment> page) {
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = new ArrayList<>(page.getContent().size());
+        for (PrimaryComment comment : page.getContent()) {
+            if (comment != null && comment.getId() != null) {
+                ids.add(comment.getId());
+            }
+        }
+        return ids;
     }
 
     @Override

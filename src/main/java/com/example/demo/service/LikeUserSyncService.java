@@ -30,7 +30,7 @@ public class LikeUserSyncService {
     @Resource
     private UserVectorBufferService userVectorBufferService;
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void applyMessage(LikeUserSyncMessage message) {
         validateMessage(message);
 

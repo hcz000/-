@@ -7,14 +7,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import io.swagger.annotations.ApiModel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
-
 /**
  * 星球表
  */
@@ -23,7 +20,7 @@ import java.time.LocalDateTime;
 @Accessors(chain = true)
 @Entity
 @Table(name = "planet")
-@ApiModel(value="Planet对象", description="星球表")
+
 public class Planet implements Serializable {
 
     private static final long serialVersionUID = 1L;

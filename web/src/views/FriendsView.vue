@@ -207,6 +207,7 @@ import { http } from '../api/http'
 import { Message, Promotion, Bell, ArrowLeft } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/useUserStore'
 import { ElMessage } from 'element-plus'
+import { send as wsSend, on as wsOn, onStatusChange, isConnected as wsIsConnected } from '../utils/wsClient'
 
 const friends = ref([])
 const isLoading = ref(false)
@@ -219,7 +220,6 @@ const chatDraft = ref('')
 const chatSending = ref(false)
 const chatListRef = ref(null)
 const userStore = useUserStore()
-let wsClient = null
 const wsConnected = ref(false)
 
 // 邀请好友相关变量
@@ -298,17 +298,16 @@ const sendChat = async () => {
     errorMessage.value = '消息内容不能为空'
     return
   }
-  if (!wsClient || wsClient.readyState !== WebSocket.OPEN) {
+  if (!wsIsConnected()) {
     errorMessage.value = '实时连接未就绪，请稍后重试'
-    connectWs()
     return
   }
   chatSending.value = true
   try {
-    wsClient.send(JSON.stringify({
+    wsSend({
       friendId: activeFriend.value.userId,
       content
-    }))
+    })
     chatDraft.value = ''
     // 由后端 WebSocket 广播回本端后统一入列表，避免重复插入
   } catch (error) {
@@ -319,103 +318,31 @@ const sendChat = async () => {
   }
 }
 
-const getWsToken = () => {
-  // 从 localStorage/sessionStorage 获取 token（与 HTTP 请求一致）
-  return localStorage.getItem('kp:token') || sessionStorage.getItem('kp:token') || ''
-}
+// 监听全局 WebSocket 连接状态
+const unsubStatus = onStatusChange((connected) => {
+  wsConnected.value = connected
+})
 
-const resolveWsUrl = () => {
-  const envUrl = import.meta.env.VITE_WS_URL || ''
-  let baseUrl = ''
-  if (envUrl) {
-    if (envUrl.startsWith('ws')) {
-      baseUrl = envUrl
-    } else if (envUrl.startsWith('http')) {
-      const url = new URL(envUrl)
-      const scheme = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      const basePath = url.pathname && url.pathname !== '/' ? url.pathname : ''
-      baseUrl = `${scheme}//${url.host}${basePath}/ws/chat`
-    } else if (envUrl.startsWith('/')) {
-      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      baseUrl = `${scheme}://${window.location.host}${envUrl}`
+// 监听 CHAT 消息
+const unsubChat = wsOn('CHAT', async (message) => {
+  if (!message) return
+  // 判断消息是否与当前活跃好友相关（统一类型比较）
+  const myId = String(userStore.id)
+  const peerId = String(message.senderId) === myId ? String(message.receiverId) : String(message.senderId)
+
+  if (activeFriend.value && String(activeFriend.value.userId) === peerId && chatMode.value) {
+    // 正在和该好友聊天，直接显示消息
+    const exists = chatMessages.value.some((item) => String(item?.id) === String(message.id))
+    if (!exists) {
+      chatMessages.value = [...chatMessages.value, message]
+      await nextTick()
+      scrollToBottom()
     }
-  } else {
-    const apiBase = import.meta.env.VITE_API_BASE || ''
-    if (apiBase && apiBase.startsWith('http')) {
-      const url = new URL(apiBase)
-      const scheme = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      baseUrl = `${scheme}//${url.host}/ws/chat`
-    } else {
-      const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
-      baseUrl = `${scheme}://${window.location.host}/ws/chat`
-    }
+  } else if (String(message.senderId) !== myId) {
+    // 收到其他好友的消息，显示提示
+    ElMessage.info(`收到来自好友的新消息`)
   }
-  const token = getWsToken()
-  if (token) {
-    const separator = baseUrl.includes('?') ? '&' : '?'
-    baseUrl = `${baseUrl}${separator}token=${encodeURIComponent(token)}`
-  }
-  return baseUrl
-}
-
-const connectWs = () => {
-  if (wsClient) return  // 已连接则不再重复连接
-  try {
-    const url = resolveWsUrl()
-    wsClient = new WebSocket(url)
-    wsClient.onopen = () => {
-      wsConnected.value = true
-    }
-    wsClient.onclose = () => {
-      wsConnected.value = false
-      wsClient = null
-    }
-    wsClient.onerror = () => {
-      wsConnected.value = false
-    }
-    wsClient.onmessage = async (event) => {
-      try {
-        const payload = JSON.parse(event.data)
-        if (payload?.type !== 'CHAT') return
-        const message = payload.data
-        if (!message) return
-
-        // 判断消息是否与当前活跃好友相关（统一类型比较）
-        const myId = String(userStore.id)
-        const peerId = String(message.senderId) === myId ? String(message.receiverId) : String(message.senderId)
-
-        if (activeFriend.value && String(activeFriend.value.userId) === peerId && chatMode.value) {
-          // 正在和该好友聊天，直接显示消息
-          const exists = chatMessages.value.some((item) => String(item?.id) === String(message.id))
-          if (!exists) {
-            chatMessages.value = [...chatMessages.value, message]
-            await nextTick()
-            scrollToBottom()
-          }
-        } else if (String(message.senderId) !== myId) {
-          // 收到其他好友的消息，显示提示
-          ElMessage.info(`收到来自好友的新消息`)
-        }
-      } catch (error) {
-        // ignore malformed payloads
-      }
-    }
-  } catch (error) {
-    wsClient = null
-  }
-}
-
-const disconnectWs = () => {
-  if (wsClient) {
-    try {
-      wsClient.close()
-    } catch (error) {
-      // ignore close errors
-    }
-    wsClient = null
-  }
-  wsConnected.value = false
-}
+})
 
 const scrollToBottom = () => {
   if (!chatListRef.value) return
@@ -560,24 +487,19 @@ const fetchPendingCount = async () => {
 onMounted(() => {
   fetchFriends()
   fetchPendingCount()
-  connectWs()  // 页面加载时就建立WebSocket连接
+  // 同步当前全局 WebSocket 连接状态
+  wsConnected.value = wsIsConnected()
 })
 
 onUnmounted(() => {
-  disconnectWs()  // 页面卸载时断开WebSocket连接
+  unsubChat()
+  unsubStatus()
 })
 
 // 监听 activeFriend 变化，当切换好友时重新拉取消息
 watch(activeFriend, (friend) => {
   if (friend && chatMode.value) {
     fetchChatMessages()
-  }
-})
-
-// 聊天模式下保持 WebSocket 连接
-watch(chatMode, (value) => {
-  if (value && !wsClient) {
-    connectWs()
   }
 })
 </script>

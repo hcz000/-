@@ -3,17 +3,14 @@ package com.example.demo.controller;
 import cn.dev33.satoken.util.SaResult;
 import com.example.demo.service.ISensitiveWordService;
 import com.example.demo.service.Impl.SensitiveWordServiceImpl;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Set;
-
 /**
  * 违禁词管理控制器
  */
-@Api(tags = "敏感词管理", description = "提供敏感词检查、过滤、添加、删除等功能")
+
 @RestController
 @RequestMapping("/sensitive")
 public class SensitiveWordController {

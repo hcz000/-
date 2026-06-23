@@ -7,16 +7,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import io.swagger.annotations.ApiModel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
-import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.type.SqlTypes;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
-
 /**
  * 用户表
  */
@@ -25,7 +20,7 @@ import java.time.LocalDateTime;
 @Accessors(chain = true)
 @Entity
 @Table(name = "users")
-@ApiModel(value="User对象", description="用户表")
+
 public class User implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -38,7 +33,6 @@ public class User implements Serializable {
     public void generateId() {
         if (this.id == null) {
             long newId = SnowflakeIdGenerator.nextId();
-            System.out.println("Generated ID: " + newId + ", toString: " + String.valueOf(newId));
             this.id = newId;
         }
         if (this.deleted == null) {
@@ -80,10 +74,6 @@ public class User implements Serializable {
 
     @Column(name = "deleted")
     private Boolean deleted;
-
-    @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "liketype", columnDefinition = "real[]")
-    private Float[] liketype = new Float[]{0.125f, 0.125f, 0.125f, 0.125f, 0.125f, 0.125f, 0.125f, 0.125f};
 
     @Column(name = "role")
     private String role;

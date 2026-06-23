@@ -6,6 +6,7 @@ import com.example.demo.config.CacheConfig;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.repository.UserRepository;
 import com.example.demo.service.IUserService;
+import com.example.demo.service.UserVectorService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -41,6 +42,8 @@ public class UserServiceImpl implements IUserService {
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private UserRepository userRepository;
+    @Resource
+    private UserVectorService userVectorService;
 
     @Override
     public String doLogin(String email, String password) {
@@ -50,11 +53,12 @@ public class UserServiceImpl implements IUserService {
             throw new BusinessException("用户名或密码错误");
         }
         StpUtil.login(user.getId());
+        userVectorService.loadToRedis(user.getId());
         return StpUtil.getTokenValue();
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = CacheConfig.CACHE_USER_BY_EMAIL, key = "#email == null ? null : #email.trim()")
     public String registered(String username, String email, String password, String code) {
         if (!StringUtils.hasText(username) || !StringUtils.hasText(email) || !StringUtils.hasText(password) || !StringUtils.hasText(code)) {
@@ -83,6 +87,7 @@ public class UserServiceImpl implements IUserService {
         user.setEmail(email);
         userRepository.save(user);
         StpUtil.login(user.getId());
+        userVectorService.loadToRedis(user.getId());
 
         return "注册成功";
     }
@@ -92,6 +97,8 @@ public class UserServiceImpl implements IUserService {
         if (!StpUtil.isLogin()) {
             throw new BusinessException("未登录");
         }
+        Long userId = StpUtil.getLoginIdAsLong();
+        userVectorService.removeFromRedis(userId);
         StpUtil.logout();
         return "退出成功";
     }
@@ -122,7 +129,7 @@ public class UserServiceImpl implements IUserService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = CacheConfig.CACHE_USER_BY_EMAIL, allEntries = true)
     public String updataUser(User user) {
         if (!StpUtil.isLogin()) {
@@ -157,6 +164,7 @@ public class UserServiceImpl implements IUserService {
     }
 
     @Override
+    @Cacheable(value = CacheConfig.CACHE_USER_BY_ID, key = "#userId", unless = "#result == null")
     public User getProfile(Long userId) {
         if (userId == null) {
             throw new BusinessException("用户未登录");

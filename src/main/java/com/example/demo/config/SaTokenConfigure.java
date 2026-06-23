@@ -1,8 +1,6 @@
 package com.example.demo.config;
 
 import cn.dev33.satoken.interceptor.SaInterceptor;
-import cn.dev33.satoken.jwt.StpLogicJwtForStateless;
-import cn.dev33.satoken.stp.StpLogic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
@@ -39,8 +37,4 @@ public class SaTokenConfigure implements WebMvcConfigurer {
         return new CorsFilter(source);
     }
 
-    @Bean
-    public StpLogic getStpLogicJwt() {
-        return new StpLogicJwtForStateless();
-    }
 }

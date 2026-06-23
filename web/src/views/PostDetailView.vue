@@ -54,9 +54,10 @@
           </el-button>
         </div>
       </div>
-      <div class="post-content-body upload-hint">
-        {{ post.content || '暂无内容' }}
-      </div>
+      <div
+        class="post-content-body upload-hint"
+        v-html="highlightMentions(post.content, '暂无内容')"
+      ></div>
       <div class="post-stats-footer">
         <span class="stat-item"><el-icon><Star /></el-icon> {{ post.likeCount || 0 }}</span>
         <span class="stat-item"><el-icon><ChatDotRound /></el-icon> {{ post.replyCount || 0 }}</span>
@@ -106,7 +107,7 @@
               <el-tag v-if="comment.firstComment" type="success" size="small" round>首评</el-tag>
             </div>
           </div>
-          <p class="comment-content-text">{{ comment.content }}</p>
+          <p class="comment-content-text" v-html="highlightMentions(comment.content)"></p>
           <div class="comment-footer">
             <div class="comment-actions-row">
               <el-button
@@ -192,7 +193,7 @@
                   <strong>用户 {{ reply.userId }}</strong>
                   <span class="upload-hint" style="margin-left: 8px;">{{ reply.createTime }}</span>
                 </div>
-                <p class="reply-item-content">{{ reply.content }}</p>
+                <p class="reply-item-content" v-html="highlightMentions(reply.content)"></p>
                 <div class="reply-item-actions">
                   <el-button
                     text
@@ -249,6 +250,7 @@ import HeartIcon from '../components/HeartIcon.vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import ReportDialog from '../components/ReportDialog.vue'
 import { useUserStore } from '../stores/useUserStore'
+import { highlightMentions } from '../utils/mentionFormatter'
 
 const route = useRoute()
 const router = useRouter()

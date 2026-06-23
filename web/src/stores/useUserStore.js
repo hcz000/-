@@ -10,7 +10,6 @@ export const useUserStore = defineStore('user', {
     status: '',
     profileLoaded: false,
     unreadNotificationCount: 0,
-    notificationPollingTimer: null,
     communityPollingTimer: null
   }),
   getters: {
@@ -28,7 +27,6 @@ export const useUserStore = defineStore('user', {
       this.avatarUrl = ''
       this.status = ''
       this.unreadNotificationCount = 0
-      this.stopNotificationPolling()
       this.stopCommunityPolling()
       this.profileLoaded = true
     },
@@ -80,7 +78,7 @@ export const useUserStore = defineStore('user', {
         return ''
       }
     },
-    // 获取未读通知数量
+    // 获取未读通知数量（上线时拉取一次）
     async fetchUnreadNotificationCount() {
       if (!this.isAuthenticated) return
       try {
@@ -88,23 +86,6 @@ export const useUserStore = defineStore('user', {
         this.unreadNotificationCount = typeof count === 'number' ? count : 0
       } catch (error) {
         // ignore errors
-      }
-    },
-    // 启动通知轮询（登录时调用）
-    startNotificationPolling(intervalMs = 5 * 60 * 1000) {
-      this.stopNotificationPolling()
-      // 立即拉取一次
-      this.fetchUnreadNotificationCount()
-      // 设置定时轮询
-      this.notificationPollingTimer = setInterval(() => {
-        this.fetchUnreadNotificationCount()
-      }, intervalMs)
-    },
-    // 停止通知轮询（退出时调用）
-    stopNotificationPolling() {
-      if (this.notificationPollingTimer) {
-        clearInterval(this.notificationPollingTimer)
-        this.notificationPollingTimer = null
       }
     },
     // 启动社区页面轮询（2分钟）

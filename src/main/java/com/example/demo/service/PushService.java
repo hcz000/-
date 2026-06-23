@@ -1,7 +1,12 @@
 package com.example.demo.service;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.demo.entity.FriendRelation;
 import com.example.demo.entity.Postings;
+import com.example.demo.repository.FriendRelationRepository;
+import com.example.demo.repository.PlanetMemberRepository;
 import com.example.demo.repository.PostingsRepository;
 import com.example.demo.service.recommend.RecommendStrategy;
 import com.example.demo.service.recommend.RecommendStrategy.StrategyResult;
@@ -9,6 +14,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +39,22 @@ public class PushService {
 
     @Resource
     private PostingsRepository postingsRepository;
+
+    @Resource
+    private PlanetMemberRepository planetMemberRepository;
+
+    @Resource
+    private FriendRelationRepository friendRelationRepository;
+
+    @Resource
+    private HotRankService hotRankService;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    private static final String DETAIL_KEY_PREFIX = "push:detail:";
+    private static final long DETAIL_TTL_DAYS = 7;
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Resource
     private RedisTemplate<String, Object> redisTemplate;
@@ -95,24 +117,44 @@ public class PushService {
         try {
             Long currentUserId = userId;
             RecommendStrategy active = getActiveStrategy();
-            List<Postings> personalized = CompletableFuture
+
+            // 并行启动两个策略（只返回 ID，不查数据库）：兴趣优先，随机兜底补全
+            CompletableFuture<List<Long>> interestIdsFuture = CompletableFuture
                     .supplyAsync(() -> {
                         StrategyResult result = active.recommend(currentUserId, TOTAL_PUSH_COUNT);
-                        return materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT,
-                                "push.a:" + result.strategyName());
-                    }, virtualThreadExecutor)
-                    .orTimeout(PUSH_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    .exceptionally(ex -> {
-                        log.warn("[push.a] strategy timeout/fail userId={}, strategy={}, fallback=random, reason={}",
-                                userId, active.getName(), ex.toString());
-                        StrategyResult fallback = randomStrategy.recommend(currentUserId, TOTAL_PUSH_COUNT);
-                        return materializeByOrderedIds(fallback.postIds(), TOTAL_PUSH_COUNT, "push.a:fallback");
-                    })
-                    .join();
-            cacheUserPush(userPushCacheKey, personalized);
-            log.info("[push.a] done userId={}, strategy={}, cost={}ms, resultSize={}",
-                    userId, active.getName(), elapsedMs(startNs), personalized.size());
-            return personalized;
+                        log.debug("[push.a] interest strategy done, ids={}", result.postIds().size());
+                        return result.postIds();
+                    }, virtualThreadExecutor);
+
+            CompletableFuture<List<Long>> randomIdsFuture = CompletableFuture
+                    .supplyAsync(() -> {
+                        StrategyResult result = randomStrategy.recommend(currentUserId, TOTAL_PUSH_COUNT);
+                        log.debug("[push.a] random strategy done, ids={}", result.postIds().size());
+                        return result.postIds();
+                    }, virtualThreadExecutor);
+
+            // 等待兴趣策略结果（带超时）
+            List<Long> interestIds;
+            try {
+                interestIds = interestIdsFuture.orTimeout(PUSH_TIMEOUT_MS, TimeUnit.MILLISECONDS).join();
+            } catch (Exception e) {
+                interestIds = Collections.emptyList();
+                log.warn("[push.a] interest strategy timeout/fail userId={}, strategy={}, reason={}",
+                        userId, active.getName(), e.toString());
+            }
+
+            // 合并 ID：兴趣优先，随机补全
+            List<Long> hotIds = hotRankService.topIds(TOTAL_PUSH_COUNT);
+            List<Long> mergedIds = mergeIds(interestIds, hotIds, randomIdsFuture, TOTAL_PUSH_COUNT);
+
+            // 统一查一次数据库，获取帖子详情
+            List<Postings> result = materializeByOrderedIds(mergedIds, TOTAL_PUSH_COUNT,
+                    "push.a:" + active.getName());
+
+            cacheUserPush(userPushCacheKey, result);
+            log.info("[push.a] done userId={}, strategy={}, cost={}ms, interestSize={}, finalSize={}",
+                    userId, active.getName(), elapsedMs(startNs), interestIds.size(), result.size());
+            return result;
         } catch (Exception e) {
             log.warn("[push.a] unexpected error userId={}, fallback=random", userId, e);
             return push();
@@ -126,13 +168,13 @@ public class PushService {
         if (!StpUtil.isLogin()) {
             return push();
         }
-        return likepush(StpUtil.getLoginIdAsLong());
+        return interestPushForUser(StpUtil.getLoginIdAsLong());
     }
 
     /**
-     * 按用户 ID 兴趣推送（供 RabbitMQ 监听器等内部调用方使用）
+     * 按指定用户的兴趣模型生成推荐，只供当前服务内部复用。
      */
-    public List<Postings> likepush(Long userId) {
+    private List<Postings> interestPushForUser(Long userId) {
         if (userId == null) {
             return push();
         }
@@ -149,6 +191,45 @@ public class PushService {
     /**
      * 根据配置获取当前激活的推荐策略
      */
+    public List<Postings> hotPush(int count) {
+        int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
+        List<Long> ids = hotRankService.topIds(limit);
+        if (ids.isEmpty()) {
+            hotRankService.rebuildRecent(500);
+            ids = hotRankService.topIds(limit);
+        }
+        return materializeByOrderedIds(ids, limit, "push.hot");
+    }
+
+    public List<Postings> planetPush(Long userId, int count) {
+        if (userId == null) {
+            return push();
+        }
+        int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
+        List<Long> planetIds = planetMemberRepository.findPlanetIdsByUserId(userId);
+        if (planetIds == null || planetIds.isEmpty()) {
+            return push();
+        }
+        List<Long> ids = postingsRepository.findRecentLiveIdsByPlanetIds(planetIds, limit);
+        return materializeByOrderedIds(ids, limit, "push.planet");
+    }
+
+    public List<Postings> friendPush(Long userId, int count) {
+        if (userId == null) {
+            return push();
+        }
+        int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
+        List<Long> friendIds = friendRelationRepository.findByUserIdInRelation(userId).stream()
+                .map(relation -> relation.getUserAId().equals(userId) ? relation.getUserBId() : relation.getUserAId())
+                .filter(Objects::nonNull)
+                .toList();
+        if (friendIds.isEmpty()) {
+            return push();
+        }
+        List<Long> ids = postingsRepository.findRecentLiveIdsByUserIds(friendIds, limit);
+        return materializeByOrderedIds(ids, limit, "push.friend");
+    }
+
     private RecommendStrategy getActiveStrategy() {
         RecommendStrategy strategy = strategies.get(activeStrategyName);
         if (strategy == null) {
@@ -157,6 +238,68 @@ public class PushService {
         }
         log.debug("[push.a] active strategy: {}", strategy.getName());
         return strategy;
+    }
+
+    // ===== 结果合并 =====
+
+    /**
+     * 合并 ID 列表：兴趣优先，随机补全
+     * <p>
+     * 如果兴趣 ID 不足 maxCount，从随机结果中取不重复的 ID 补齐
+     */
+    private List<Long> mergeIds(List<Long> interestIds,
+                                List<Long> hotIds,
+                                CompletableFuture<List<Long>> randomIdsFuture,
+                                int maxCount) {
+        // 兴趣结果够用 → 直接去重返回
+        if (interestIds.size() >= maxCount) {
+            return dedupLimit(interestIds, maxCount);
+        }
+
+        // 等随机结果（此时大概率已经完成了）
+        List<Long> randomIds;
+        try {
+            randomIds = randomIdsFuture.join();
+        } catch (Exception e) {
+            log.warn("[push.a] random strategy also failed", e);
+            return dedupLimit(interestIds, maxCount);
+        }
+
+        // 去重合并：兴趣优先，随机补全
+        Set<Long> seenIds = new HashSet<>();
+        List<Long> merged = new ArrayList<>(maxCount);
+        for (Long id : interestIds) {
+            if (id != null && seenIds.add(id)) {
+                merged.add(id);
+            }
+        }
+        if (hotIds != null) {
+            for (Long id : hotIds) {
+                if (merged.size() >= maxCount) break;
+                if (id != null && seenIds.add(id)) {
+                    merged.add(id);
+                }
+            }
+        }
+        for (Long id : randomIds) {
+            if (merged.size() >= maxCount) break;
+            if (id != null && seenIds.add(id)) {
+                merged.add(id);
+            }
+        }
+        return merged;
+    }
+
+    private List<Long> dedupLimit(List<Long> ids, int maxCount) {
+        Set<Long> seen = new HashSet<>();
+        List<Long> result = new ArrayList<>(maxCount);
+        for (Long id : ids) {
+            if (id != null && seen.add(id)) {
+                result.add(id);
+                if (result.size() >= maxCount) break;
+            }
+        }
+        return result;
     }
 
     // ===== 通用工具方法 =====
@@ -176,6 +319,7 @@ public class PushService {
         if (orderedIds == null || orderedIds.isEmpty()) {
             return Collections.emptyList();
         }
+        // 去重 + 截断
         List<Long> dedupOrdered = new ArrayList<>(Math.min(orderedIds.size(), maxCount));
         Set<Long> seen = new HashSet<>(orderedIds.size());
         for (Long id : orderedIds) {
@@ -186,17 +330,34 @@ public class PushService {
         if (dedupOrdered.isEmpty()) {
             return Collections.emptyList();
         }
-        List<Postings> rows = loadPostsByIdsTimed(dedupOrdered, sourceKey);
-        if (rows.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<Postings> result = new ArrayList<>(rows.size());
-        Map<Long, Postings> postMap = new HashMap<>(rows.size());
-        for (Postings row : rows) {
-            if (row != null && row.getPostingsId() != null) {
-                postMap.put(row.getPostingsId(), row);
+
+        // 1. 先从 Redis 批量读取帖子详情
+        Map<Long, Postings> postMap = loadFromRedisDetail(dedupOrdered);
+
+        // 2. 找出 Redis 未命中的 ID
+        List<Long> missedIds = new ArrayList<>();
+        for (Long id : dedupOrdered) {
+            if (!postMap.containsKey(id)) {
+                missedIds.add(id);
             }
         }
+
+        // 3. 未命中的批量查数据库并回填 Redis
+        if (!missedIds.isEmpty()) {
+            long startNs = System.nanoTime();
+            List<Postings> pgRows = postingsRepository.findAllById(missedIds);
+            log.debug("[push] db fallback ids={}, hits={}, cost={}ms",
+                    missedIds.size(), pgRows.size(), elapsedMs(startNs));
+            for (Postings row : pgRows) {
+                if (row != null && row.getPostingsId() != null) {
+                    postMap.put(row.getPostingsId(), row);
+                    cachePostDetail(row);  // 回填 Redis
+                }
+            }
+        }
+
+        // 4. 按原始顺序组装结果
+        List<Postings> result = new ArrayList<>(postMap.size());
         for (Long id : dedupOrdered) {
             Postings post = postMap.get(id);
             if (post != null) {
@@ -204,6 +365,63 @@ public class PushService {
             }
         }
         return result;
+    }
+
+    // ===== Redis 帖子详情缓存 =====
+
+    /**
+     * 从 Redis 批量读取帖子详情（Pipeline）
+     */
+    private Map<Long, Postings> loadFromRedisDetail(List<Long> ids) {
+        Map<Long, Postings> result = new HashMap<>(ids.size());
+        try {
+            List<Object> responses = stringRedisTemplate.executePipelined(
+                    (org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+                        for (Long id : ids) {
+                            byte[] key = stringRedisTemplate.getStringSerializer()
+                                    .serialize(DETAIL_KEY_PREFIX + id);
+                            if (key != null) {
+                                connection.stringCommands().get(key);
+                            }
+                        }
+                        return null;
+                    });
+
+            for (int i = 0; i < ids.size() && i < responses.size(); i++) {
+                Object raw = responses.get(i);
+                if (raw instanceof String json) {
+                    try {
+                        Postings post = MAPPER.readValue(json, Postings.class);
+                        if (post != null && post.getPostingsId() != null) {
+                            result.put(post.getPostingsId(), post);
+                        }
+                    } catch (JsonProcessingException ignored) {
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[push] redis detail pipeline failed", e);
+        }
+        if (!result.isEmpty()) {
+            log.debug("[push] redis detail hit {}/{}", result.size(), ids.size());
+        }
+        return result;
+    }
+
+    /**
+     * 将帖子详情写入 Redis（7天过期）
+     */
+    private void cachePostDetail(Postings post) {
+        if (post == null || post.getPostingsId() == null) return;
+        try {
+            String json = MAPPER.writeValueAsString(post);
+            stringRedisTemplate.opsForValue().set(
+                    DETAIL_KEY_PREFIX + post.getPostingsId(),
+                    json,
+                    DETAIL_TTL_DAYS, TimeUnit.DAYS);
+        } catch (JsonProcessingException e) {
+            log.warn("[push] cache post detail failed, postId={}", post.getPostingsId(), e);
+        }
     }
 
     private List<Postings> getUserPushFromCache(String userPushCacheKey) {

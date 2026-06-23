@@ -4,7 +4,6 @@ import cn.dev33.satoken.util.SaResult;
 import com.example.demo.entity.search.SearchResult;
 import com.example.demo.service.SearchService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,14 +11,11 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-
-@Api(tags = "搜索", description = "提供全局搜索和并行搜索能力")
 @RestController
 @RequestMapping("/search")
 public class SearchController {

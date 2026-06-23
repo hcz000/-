@@ -1,307 +1,251 @@
--- ========================================
--- KnowledgePlanet PostgreSQL 完整建表脚本
--- 版本：1.1
--- 说明：包含所有表结构、索引、触发器
--- 注意：搜索使用 ILIKE + pg_trgm 模糊匹配，无需额外扩展
--- ========================================
-CREATE DATABASE knowledge_planet;
--- ========================================
--- Part 1: 核心用户表
--- ========================================
--- 1. 用户表（users）
+CREATE DATABASE IF NOT EXISTS knowledgeplanet
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_0900_ai_ci;
+
+USE knowledgeplanet;
+
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT PRIMARY KEY,                      -- 主键由应用层生成（Snowflake）
+    id BIGINT PRIMARY KEY,
     username VARCHAR(64) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
     email VARCHAR(128) UNIQUE,
     avatar VARCHAR(512),
-    role VARCHAR(32) DEFAULT 'user',            -- 用户角色：user/admin
-    liketype REAL[] DEFAULT ARRAY[0.125,0.125,0.125,0.125,0.125,0.125,0.125,0.125]::REAL[], -- 用户兴趣向量（8维数组）
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted BOOLEAN DEFAULT FALSE
-);
+    role VARCHAR(32) DEFAULT 'user',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted BOOLEAN DEFAULT FALSE,
+    INDEX idx_users_email (email),
+    INDEX idx_users_username (username),
+    INDEX idx_users_role (role),
+    FULLTEXT INDEX ft_users_username_email (username, email) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户表';
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
-
-COMMENT ON TABLE users IS '用户表';
-COMMENT ON COLUMN users.role IS '用户角色：user-普通用户, admin-管理员';
-
--- ========================================
--- Part 2: 星球模块
--- ========================================
-
--- 2. 星球表（planet）
 CREATE TABLE IF NOT EXISTS planet (
     planet_id BIGINT PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
-    master BIGINT NOT NULL,                     -- 星球创建者ID
-    member_count INTEGER DEFAULT 0,             -- 成员数缓存（由 planet_member 实时维护）
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    master BIGINT NOT NULL,
+    member_count INT DEFAULT 0,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted BOOLEAN DEFAULT FALSE,
     description TEXT,
     category VARCHAR(64),
-    status INTEGER                              -- 星球状态
-);
+    status INT,
+    INDEX idx_planet_deleted (deleted),
+    INDEX idx_planet_name (name),
+    INDEX idx_planet_master (master),
+    FULLTEXT INDEX ft_planet_search (name, description, category) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='星球表';
 
-CREATE INDEX IF NOT EXISTS idx_planet_deleted ON planet(deleted);
-CREATE INDEX IF NOT EXISTS idx_planet_name ON planet(name);
-CREATE INDEX IF NOT EXISTS idx_planet_master ON planet(master);
-
-COMMENT ON TABLE planet IS '星球表';
-COMMENT ON COLUMN planet.member_count IS '成员数缓存';
-
--- 2b. 星球-用户成员关系表（planet_member）
--- 替代原有的 users.join_planet（JSONB）和 planet.member（JSONB）
 CREATE TABLE IF NOT EXISTS planet_member (
     id BIGINT PRIMARY KEY,
     planet_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uk_planet_member UNIQUE (planet_id, user_id)
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_planet_member (planet_id, user_id),
+    INDEX idx_pm_planet (planet_id),
+    INDEX idx_pm_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='星球成员关系表';
 
-CREATE INDEX IF NOT EXISTS idx_pm_planet ON planet_member(planet_id);
-CREATE INDEX IF NOT EXISTS idx_pm_user ON planet_member(user_id);
-
-COMMENT ON TABLE planet_member IS '星球成员关系表';
-COMMENT ON COLUMN planet_member.planet_id IS '星球ID';
-COMMENT ON COLUMN planet_member.user_id IS '用户ID';
-COMMENT ON COLUMN planet_member.create_time IS '加入时间';
-
--- ========================================
--- Part 3: 帖子与评论模块
--- ========================================
-
--- 3. 帖子表（postings）
 CREATE TABLE IF NOT EXISTS postings (
     postings_id BIGINT PRIMARY KEY,
     planet_id BIGINT NOT NULL,
     title VARCHAR(255) NOT NULL,
     content TEXT,
-    status SMALLINT DEFAULT 0 NOT NULL,         -- 0正常 1隐藏
+    status SMALLINT DEFAULT 0 NOT NULL,
     reply_count INT DEFAULT 0 NOT NULL,
     like_count INT DEFAULT 0 NOT NULL,
-    type VARCHAR(32),                           -- 帖子类型，用于兴趣推送
-    images JSONB DEFAULT '[]'::jsonb,           -- 帖子图片URL列表（JSONB数组）
-    audit_status SMALLINT DEFAULT 1,            -- 审核状态：0-待审核, 1-已通过, 2-已拒绝
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    type VARCHAR(32),
+    images JSON DEFAULT (JSON_ARRAY()),
+    audit_status SMALLINT DEFAULT 1,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted BOOLEAN DEFAULT FALSE,
     user_id BIGINT NOT NULL,
-    first_comment_id BIGINT
-);
+    first_comment_id BIGINT,
+    INDEX idx_postings_deleted (deleted),
+    INDEX idx_postings_planet (planet_id),
+    INDEX idx_postings_user (user_id),
+    INDEX idx_postings_type (type),
+    INDEX idx_postings_create_time (create_time DESC),
+    INDEX idx_postings_audit_status (audit_status),
+    INDEX idx_postings_push_base (deleted, status, audit_status, create_time DESC),
+    INDEX idx_postings_push_type (type, deleted, status, audit_status, create_time DESC),
+    INDEX idx_postings_planet_live_ctime (planet_id, deleted, status, audit_status, create_time DESC),
+    INDEX idx_postings_user_ctime (user_id, create_time DESC),
+    FULLTEXT INDEX ft_postings_title_content (title, content) WITH PARSER ngram
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='帖子表';
 
-CREATE INDEX IF NOT EXISTS idx_postings_deleted ON postings(deleted);
-CREATE INDEX IF NOT EXISTS idx_postings_planet ON postings(planet_id);
-CREATE INDEX IF NOT EXISTS idx_postings_user ON postings(user_id);
-CREATE INDEX IF NOT EXISTS idx_postings_type ON postings(type);
-CREATE INDEX IF NOT EXISTS idx_postings_create_time ON postings(create_time DESC);
-CREATE INDEX IF NOT EXISTS idx_postings_images ON postings USING gin(images);
-CREATE INDEX IF NOT EXISTS idx_postings_audit_status ON postings(audit_status);
-
-COMMENT ON TABLE postings IS '帖子表';
-COMMENT ON COLUMN postings.images IS '帖子图片URL列表（JSONB数组）';
-COMMENT ON COLUMN postings.audit_status IS '审核状态：0-待审核, 1-已通过, 2-已拒绝';
-
--- 4. 一级评论表（primary_comment）
 CREATE TABLE IF NOT EXISTS primary_comment (
     id BIGINT PRIMARY KEY,
     postings_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     content TEXT,
     like_count INT DEFAULT 0 NOT NULL,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted BOOLEAN DEFAULT FALSE
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted BOOLEAN DEFAULT FALSE,
+    INDEX idx_primary_comment_postings (postings_id),
+    INDEX idx_primary_comment_user (user_id),
+    INDEX idx_primary_comment_create_time (create_time DESC),
+    INDEX idx_primary_comment_postings_live_ctime (postings_id, deleted, create_time DESC),
+    INDEX idx_primary_comment_user_live_ctime (user_id, deleted, create_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='一级评论表';
 
-CREATE INDEX IF NOT EXISTS idx_primary_comment_postings ON primary_comment(postings_id);
-CREATE INDEX IF NOT EXISTS idx_primary_comment_user ON primary_comment(user_id);
-CREATE INDEX IF NOT EXISTS idx_primary_comment_create_time ON primary_comment(create_time DESC);
-
-COMMENT ON TABLE primary_comment IS '一级评论表';
-
--- 5. 二级评论表（secondary_comment）
 CREATE TABLE IF NOT EXISTS secondary_comment (
     id BIGINT PRIMARY KEY,
     postings_id BIGINT NOT NULL,
     primary_comment_id BIGINT NOT NULL,
-    parent_id BIGINT,                           -- 父评论ID（支持多级回复）
+    parent_id BIGINT,
     user_id BIGINT NOT NULL,
     reply_to_username VARCHAR(128),
     content TEXT,
     like_count INT DEFAULT 0 NOT NULL,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted BOOLEAN DEFAULT FALSE
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted BOOLEAN DEFAULT FALSE,
+    INDEX idx_secondary_comment_primary (primary_comment_id),
+    INDEX idx_secondary_comment_postings (postings_id),
+    INDEX idx_secondary_comment_user (user_id),
+    INDEX idx_secondary_comment_create_time (create_time DESC),
+    INDEX idx_secondary_comment_primary_live_ctime (primary_comment_id, deleted, create_time DESC),
+    INDEX idx_secondary_comment_postings_live_ctime (postings_id, deleted, create_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='二级评论表';
 
-CREATE INDEX IF NOT EXISTS idx_secondary_comment_primary ON secondary_comment(primary_comment_id);
-CREATE INDEX IF NOT EXISTS idx_secondary_comment_postings ON secondary_comment(postings_id);
-CREATE INDEX IF NOT EXISTS idx_secondary_comment_user ON secondary_comment(user_id);
-CREATE INDEX IF NOT EXISTS idx_secondary_comment_create_time ON secondary_comment(create_time DESC);
-
-COMMENT ON TABLE secondary_comment IS '二级评论表';
-COMMENT ON COLUMN secondary_comment.primary_comment_id IS '所属一级评论ID';
-COMMENT ON COLUMN secondary_comment.parent_id IS '父评论ID（支持多级回复）';
-
--- ========================================
--- Part 4: 社交模块（好友、聊天）
--- ========================================
-
--- 6. 好友关系表（friend_relation）
 CREATE TABLE IF NOT EXISTS friend_relation (
     id BIGINT PRIMARY KEY,
     user_a_id BIGINT NOT NULL,
     user_b_id BIGINT NOT NULL,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted BOOLEAN DEFAULT FALSE,
-    CONSTRAINT ux_friend_pair UNIQUE (user_a_id, user_b_id),
-    CONSTRAINT ck_friend_order CHECK (user_a_id < user_b_id)
-);
+    UNIQUE KEY ux_friend_pair (user_a_id, user_b_id),
+    CONSTRAINT ck_friend_order CHECK (user_a_id < user_b_id),
+    INDEX idx_friend_relation_user_a (user_a_id),
+    INDEX idx_friend_relation_user_b (user_b_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='好友关系表';
 
-CREATE INDEX IF NOT EXISTS idx_friend_relation_user_a ON friend_relation(user_a_id);
-CREATE INDEX IF NOT EXISTS idx_friend_relation_user_b ON friend_relation(user_b_id);
-
-COMMENT ON TABLE friend_relation IS '好友关系表';
-COMMENT ON COLUMN friend_relation.deleted IS '软删除标记：0-正常 1-已删除';
-
--- 7. 好友请求表（friend_request）
 CREATE TABLE IF NOT EXISTS friend_request (
     id BIGINT PRIMARY KEY,
     requester_id BIGINT NOT NULL,
     target_id BIGINT NOT NULL,
     message VARCHAR(200),
-    status SMALLINT DEFAULT 0 NOT NULL,         -- 0待处理 1同意 2拒绝
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
+    status SMALLINT DEFAULT 0 NOT NULL,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_friend_request_requester (requester_id, status),
+    INDEX idx_friend_request_target (target_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='好友请求表';
 
-CREATE INDEX IF NOT EXISTS idx_friend_request_requester ON friend_request(requester_id, status);
-CREATE INDEX IF NOT EXISTS idx_friend_request_target ON friend_request(target_id, status);
-
-COMMENT ON TABLE friend_request IS '好友请求表';
-COMMENT ON COLUMN friend_request.status IS '0待处理 1同意 2拒绝';
-
--- 8. 聊天消息表（chat_message）
 CREATE TABLE IF NOT EXISTS chat_message (
     id BIGINT PRIMARY KEY,
-    conversation_id VARCHAR(41) NOT NULL,       -- userId:friendId（最大 20+1+20=41）
+    conversation_id VARCHAR(41) NOT NULL,
     sender_id BIGINT NOT NULL,
     receiver_id BIGINT NOT NULL,
     content TEXT NOT NULL,
     read_flag BOOLEAN DEFAULT FALSE,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    INDEX idx_chat_conversation (conversation_id, create_time),
+    INDEX idx_chat_sender (sender_id),
+    INDEX idx_chat_receiver (receiver_id),
+    INDEX idx_chat_conversation_ctime_desc (conversation_id, create_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='聊天消息表';
 
-CREATE INDEX IF NOT EXISTS idx_chat_conversation ON chat_message(conversation_id, create_time);
-CREATE INDEX IF NOT EXISTS idx_chat_sender ON chat_message(sender_id);
-CREATE INDEX IF NOT EXISTS idx_chat_receiver ON chat_message(receiver_id);
-
-COMMENT ON TABLE chat_message IS '聊天消息表';
-COMMENT ON COLUMN chat_message.conversation_id IS '对话ID格式：userId:friendId';
-
--- ========================================
--- Part 5: 点赞与通知模块
--- ========================================
-
--- 9. 用户点赞表（user_like）
 CREATE TABLE IF NOT EXISTS user_like (
     id BIGINT PRIMARY KEY,
-    biz_type VARCHAR(32) NOT NULL,              -- POST, PRIMARY-COMMENT, SECONDARY-COMMENT
+    biz_type VARCHAR(32) NOT NULL,
     biz_id BIGINT NOT NULL,
     user_id BIGINT NOT NULL,
     liked BOOLEAN DEFAULT TRUE,
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_user_like_biz (biz_type, biz_id),
+    INDEX idx_user_like_user (user_id),
+    UNIQUE KEY idx_uq_user_like (biz_type, biz_id, user_id),
+    INDEX idx_user_like_user_type_liked (user_id, biz_type, liked, update_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户点赞表';
 
-CREATE INDEX IF NOT EXISTS idx_user_like_biz ON user_like(biz_type, biz_id);
-CREATE INDEX IF NOT EXISTS idx_user_like_user ON user_like(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_uq_user_like ON user_like(biz_type, biz_id, user_id);
-
-COMMENT ON TABLE user_like IS '用户点赞表';
-COMMENT ON COLUMN user_like.biz_type IS '业务类型：POST-帖子, PRIMARY-COMMENT-一级评论, SECONDARY-COMMENT-二级评论';
-
--- 10. 通知表（t_notification）
 CREATE TABLE IF NOT EXISTS t_notification (
     id BIGINT PRIMARY KEY,
-    sender_id BIGINT NOT NULL,
+    sender_id BIGINT,
     recipient_id BIGINT NOT NULL,
     related_id VARCHAR(64),
     post_id BIGINT,
-    type SMALLINT NOT NULL,                    -- 1点赞 2评论 3系统通知
+    type SMALLINT NOT NULL,
     content VARCHAR(512),
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    read_flag BOOLEAN DEFAULT FALSE
-);
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    read_flag BOOLEAN DEFAULT FALSE,
+    INDEX idx_notify_recipient (recipient_id),
+    INDEX idx_notify_type (type),
+    INDEX idx_notify_recipient_read (recipient_id, read_flag),
+    INDEX idx_notify_recipient_ctime (recipient_id, create_time DESC),
+    INDEX idx_notify_recipient_read_ctime (recipient_id, read_flag, create_time DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='通知表';
 
-CREATE INDEX IF NOT EXISTS idx_notify_recipient ON t_notification(recipient_id);
-CREATE INDEX IF NOT EXISTS idx_notify_type ON t_notification(type);
-CREATE INDEX IF NOT EXISTS idx_notify_recipient_read ON t_notification(recipient_id, read_flag);
-
-COMMENT ON TABLE t_notification IS '通知表';
-COMMENT ON COLUMN t_notification.read_flag IS '0-未读 1-已读';
-
--- ========================================
--- Part 6: 管理模块（举报）
--- ========================================
-
--- 11. 举报表（report）
 CREATE TABLE IF NOT EXISTS report (
     id BIGINT PRIMARY KEY,
-    reporter_id BIGINT NOT NULL,               -- 举报人ID
-    target_type VARCHAR(32) NOT NULL,          -- POST, COMMENT, USER
-    target_id BIGINT NOT NULL,                 -- 被举报对象ID
-    reason_type VARCHAR(32) NOT NULL,          -- SPAM, ABUSE, ILLEGAL, OTHER
-    reason_detail TEXT,                        -- 举报详细描述
-    status VARCHAR(32) DEFAULT 'PENDING',      -- PENDING, PROCESSING, RESOLVED, REJECTED
-    handler_id BIGINT,                         -- 处理人ID（管理员）
-    handle_result TEXT,                        -- 处理结果描述
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    handle_time TIMESTAMP
-);
+    reporter_id BIGINT NOT NULL,
+    target_type VARCHAR(32) NOT NULL,
+    target_id BIGINT NOT NULL,
+    reason_type VARCHAR(32) NOT NULL,
+    reason_detail TEXT,
+    status VARCHAR(32) DEFAULT 'PENDING',
+    handler_id BIGINT,
+    handle_result TEXT,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    handle_time DATETIME,
+    INDEX idx_report_reporter (reporter_id),
+    INDEX idx_report_target (target_type, target_id),
+    INDEX idx_report_status (status),
+    INDEX idx_report_create_time (create_time DESC),
+    INDEX idx_report_reporter_ctime (reporter_id, create_time DESC),
+    INDEX idx_report_status_ctime (status, create_time DESC),
+    INDEX idx_report_dup_pending (reporter_id, target_type, target_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='举报记录表';
 
-CREATE INDEX IF NOT EXISTS idx_report_reporter ON report(reporter_id);
-CREATE INDEX IF NOT EXISTS idx_report_target ON report(target_type, target_id);
-CREATE INDEX IF NOT EXISTS idx_report_status ON report(status);
-CREATE INDEX IF NOT EXISTS idx_report_create_time ON report(create_time DESC);
+CREATE TABLE IF NOT EXISTS user_interest_model (
+    id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    interest_key VARCHAR(64) NOT NULL,
+    weight FLOAT NOT NULL DEFAULT 0,
+    event_count INT NOT NULL DEFAULT 0,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_user_interest (user_id, interest_key),
+    INDEX idx_user_interest_user (user_id),
+    INDEX idx_user_interest_key (interest_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户兴趣模型持久快照';
 
-COMMENT ON TABLE report IS '举报记录表';
-COMMENT ON COLUMN report.target_type IS '被举报对象类型：POST-帖子, COMMENT-评论, USER-用户';
-COMMENT ON COLUMN report.reason_type IS '举报原因：SPAM-垃圾信息, ABUSE-辱骂, ILLEGAL-违规内容, OTHER-其他';
-COMMENT ON COLUMN report.status IS '处理状态：PENDING-待处理, PROCESSING-处理中, RESOLVED-已处理, REJECTED-已驳回';
+CREATE TABLE IF NOT EXISTS system_config (
+    id BIGINT PRIMARY KEY,
+    config_key VARCHAR(128) NOT NULL UNIQUE,
+    config_value VARCHAR(1024) NOT NULL,
+    description VARCHAR(255),
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_system_config_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='系统配置表';
 
--- ========================================
--- Part 7: 表统计查询（验证）
--- ========================================
+CREATE TABLE IF NOT EXISTS admin_operation_log (
+    id BIGINT PRIMARY KEY,
+    admin_id BIGINT NOT NULL,
+    action VARCHAR(64) NOT NULL,
+    target_type VARCHAR(64),
+    target_id BIGINT,
+    detail VARCHAR(1024),
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_admin_log_admin (admin_id, create_time DESC),
+    INDEX idx_admin_log_target (target_type, target_id),
+    INDEX idx_admin_log_action (action)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='管理员操作日志';
 
--- 查询所有表数据量
-SELECT 'users' AS table_name, COUNT(*) AS count FROM users
-UNION ALL SELECT 'planet', COUNT(*) FROM planet
-UNION ALL SELECT 'planet_member', COUNT(*) FROM planet_member
-UNION ALL SELECT 'postings', COUNT(*) FROM postings
-UNION ALL SELECT 'primary_comment', COUNT(*) FROM primary_comment
-UNION ALL SELECT 'secondary_comment', COUNT(*) FROM secondary_comment
-UNION ALL SELECT 'chat_message', COUNT(*) FROM chat_message
-UNION ALL SELECT 'friend_relation', COUNT(*) FROM friend_relation
-UNION ALL SELECT 'friend_request', COUNT(*) FROM friend_request
-UNION ALL SELECT 't_notification', COUNT(*) FROM t_notification
-UNION ALL SELECT 'user_like', COUNT(*) FROM user_like
-UNION ALL SELECT 'report', COUNT(*) FROM report;
-
--- ========================================
--- 完成提示
--- ========================================
--- 执行此脚本后，数据库具备：
--- 1. ✅ 12张核心业务表
--- 2. ✅ 关系表替代 JSONB（planet_member 替代 users.join_planet / planet.member）
--- 3. ✅ 规范的时间字段（TIMESTAMP）
--- 4. ✅ 合理的数据类型（BOOLEAN、BIGINT、JSONB）
--- 5. ✅ 完整的索引与约束覆盖（UNIQUE、CHECK、外键逻辑）
--- 6. ✅ 举报管理功能
+INSERT INTO system_config (id, config_key, config_value, description, create_time, update_time)
+VALUES
+  (900000000000000001, 'hot.like.weight', '3.0', '热榜点赞权重', NOW(), NOW()),
+  (900000000000000002, 'hot.reply.weight', '5.0', '热榜评论权重', NOW(), NOW()),
+  (900000000000000003, 'hot.half_life.hours', '24', '热榜半衰期小时数', NOW(), NOW()),
+  (900000000000000004, 'audit.enabled', 'true', '是否开启内容审核', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+  config_value = VALUES(config_value),
+  description = VALUES(description),
+  update_time = NOW();

@@ -3,13 +3,18 @@ package com.example.demo.task;
 import com.example.demo.repository.PostingsRepository;
 import com.example.demo.repository.PrimaryCommentRepository;
 import com.example.demo.repository.SecondaryCommentRepository;
+import com.rabbitmq.client.Channel;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
+
+import java.io.IOException;
 
 /**
  * 点赞统计同步监听器。
@@ -28,8 +33,12 @@ public class LikeSyncMessageListener {
     private TransactionTemplate transactionTemplate;
 
     @RabbitListener(queues = CommentTopics.LIKE_SYNC)
-    public void onMessage(String payload) {
+    public void onMessage(String payload,
+                         Channel channel,
+                         @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag) throws IOException {
         if (!StringUtils.hasText(payload)) {
+            // 空消息直接ACK丢弃
+            channel.basicAck(deliveryTag, false);
             return;
         }
 
@@ -38,10 +47,20 @@ public class LikeSyncMessageListener {
             message = LikeSyncMessage.deserialize(payload);
         } catch (Exception e) {
             log.warn("无效的点赞同步消息载荷: {}", payload, e);
-            throw new AmqpRejectAndDontRequeueException("invalid like-sync payload", e);
+            // 无效消息拒绝并不重新入队
+            channel.basicNack(deliveryTag, false, false);
+            return;
         }
 
-        transactionTemplate.executeWithoutResult(status -> dispatch(message));
+        try {
+            transactionTemplate.executeWithoutResult(status -> dispatch(message));
+            // 处理成功,手动ACK
+            channel.basicAck(deliveryTag, false);
+        } catch (Exception e) {
+            log.error("点赞同步失败,消息将重新入队: {}", message, e);
+            // 处理失败,拒绝并重新入队
+            channel.basicNack(deliveryTag, false, true);
+        }
     }
 
     private void dispatch(LikeSyncMessage message) {

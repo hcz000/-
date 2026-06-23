@@ -24,7 +24,7 @@ public class ChatService {
     @Resource
     private FriendService friendService;
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public ChatMessage sendMessage(Long senderId, Long receiverId, String content) {
         if (receiverId == null) {
             throw new BusinessException("好友 ID 不能为空");

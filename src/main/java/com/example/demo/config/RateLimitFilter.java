@@ -17,6 +17,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -52,16 +53,22 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * 等待获取令牌的超时时间（毫秒），默认 0 表示不等待直接返回 429
      */
     private final long acquireTimeoutMillis;
+    private final String tokenHeaderName;
+    private final boolean enabled;
 
     public RateLimitFilter(
+            @org.springframework.beans.factory.annotation.Value("${rate-limit.enabled:true}") boolean enabled,
             @org.springframework.beans.factory.annotation.Value("${rate-limit.anonymous-permits:5}") int anonymousPermitsPerSecond,
             @org.springframework.beans.factory.annotation.Value("${rate-limit.authenticated-permits:20}") int authenticatedPermitsPerSecond,
             @org.springframework.beans.factory.annotation.Value("${rate-limit.acquire-timeout-millis:0}") long acquireTimeoutMillis,
+            @org.springframework.beans.factory.annotation.Value("${sa-token.token-name:Authorization}") String tokenHeaderName,
             @org.springframework.beans.factory.annotation.Value("${rate-limit.cache-expire-minutes:30}") long cacheExpireMinutes,
             @org.springframework.beans.factory.annotation.Value("${rate-limit.max-cache-size:10000}") int maxCacheSize) {
         this.anonymousPermitsPerSecond = Math.max(1, anonymousPermitsPerSecond);
         this.authenticatedPermitsPerSecond = Math.max(1, authenticatedPermitsPerSecond);
         this.acquireTimeoutMillis = Math.max(0, acquireTimeoutMillis);
+        this.tokenHeaderName = StringUtils.hasText(tokenHeaderName) ? tokenHeaderName : "Authorization";
+        this.enabled = enabled;
 
         // 使用 Caffeine 构建 Cache，自动过期清理
         // Native Image兼容：使用expireAfterWrite替代expireAfterAccess
@@ -79,6 +86,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
+
+        // 限流关闭时直接放行
+        if (!enabled) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
         // 获取限流 Key 和对应的限流阈值
         RateLimitContext context = getRateLimitContext(request);
@@ -143,8 +156,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
      */
     private RateLimitContext getRateLimitContext(HttpServletRequest request) {
         // 已登录用户：使用 UserID 限流，阈值较高
-        // 1. 直接从手里的 request 拿 token
-        String token = request.getHeader("satoken");
+        String token = extractToken(request);
         // 2. 用无上下文 API 验证 (直接查 Redis/内存，不碰 ThreadLocal)
         Object loginId = StpUtil.getLoginIdByToken(token);
 
@@ -178,6 +190,23 @@ public class RateLimitFilter extends OncePerRequestFilter {
             ip = ip.split(",")[0].trim();
         }
         return ip != null ? ip : "unknown";
+    }
+
+    private String extractToken(HttpServletRequest request) {
+        String token = request.getHeader(tokenHeaderName);
+        if (!StringUtils.hasText(token) && !"Authorization".equalsIgnoreCase(tokenHeaderName)) {
+            token = request.getHeader("Authorization");
+        }
+        if (!StringUtils.hasText(token) && !"satoken".equalsIgnoreCase(tokenHeaderName)) {
+            token = request.getHeader("satoken");
+        }
+        if (!StringUtils.hasText(token)) {
+            return null;
+        }
+        if (token.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return token.substring(7).trim();
+        }
+        return token.trim();
     }
 
     /**

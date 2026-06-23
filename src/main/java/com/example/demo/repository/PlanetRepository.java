@@ -14,15 +14,14 @@ public interface PlanetRepository extends JpaRepository<Planet, Long>, JpaSpecif
 
     @Query(value = """
             SELECT planet_id, name, description, member_count, master, category, create_time, update_time, deleted, status,
-                   GREATEST(similarity(coalesce(name, ''), :keyword),
-                            similarity(coalesce(description, ''), :keyword),
-                            similarity(coalesce(category, ''), :keyword)) as relevance
+                   MATCH(name, description, category) AGAINST (:keyword IN NATURAL LANGUAGE MODE) AS relevance
             FROM planet
             WHERE deleted = false
               AND (
-                    coalesce(name, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(description, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(category, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(name, description, category) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR name LIKE CONCAT('%', :keyword, '%')
+                 OR description LIKE CONCAT('%', :keyword, '%')
+                 OR category LIKE CONCAT('%', :keyword, '%')
               )
             ORDER BY relevance DESC, create_time DESC
             LIMIT :pageSize OFFSET :offset

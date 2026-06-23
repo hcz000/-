@@ -8,14 +8,10 @@ import com.example.demo.enums.LikeBizType;
 import com.example.demo.service.IPrimaryCommentService;
 import com.example.demo.service.LikeService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.HashMap;
 import java.util.Map;
-
-@Api(tags = "一级评论接口", description = "提供帖子的一/级评论发布、删除、点赞、查询等功能")
 @RestController
 @RequestMapping("/primary-comment0")
 public class PrimaryCommentController {

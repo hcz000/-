@@ -7,18 +7,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import io.swagger.annotations.ApiModel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-
 /**
  * 帖子表
  */
@@ -27,7 +24,7 @@ import java.util.List;
 @Accessors(chain = true)
 @Entity
 @Table(name = "postings")
-@ApiModel(value="Postings对象", description="帖子表")
+
 public class Postings implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -87,7 +84,7 @@ public class Postings implements Serializable {
     @Column(name = "type")
     private String type;
 
-    @Column(name = "images", columnDefinition = "jsonb")
+    @Column(name = "images", columnDefinition = "json")
     @JdbcTypeCode(SqlTypes.JSON)
     private List<String> images = new ArrayList<>();
 

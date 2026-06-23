@@ -32,7 +32,7 @@ public class ReportServiceImpl implements IReportService {
     private ReportRepository reportRepository;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = CacheConfig.CACHE_MY_REPORTS, allEntries = true)
     public String submitReport(String targetType, Long targetId, String reasonType, String reasonDetail) {
         if (!StpUtil.isLogin()) {
@@ -94,7 +94,7 @@ public class ReportServiceImpl implements IReportService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @CacheEvict(value = CacheConfig.CACHE_MY_REPORTS, allEntries = true)
     public String handleReport(Long reportId, String status, String handleResult) {
         checkAdminPermission();

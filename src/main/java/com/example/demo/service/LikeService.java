@@ -11,7 +11,9 @@ import jakarta.annotation.Resource;
 import jakarta.persistence.criteria.Predicate;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
@@ -19,6 +21,7 @@ import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.BoundSetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -124,6 +127,36 @@ public class LikeService {
         String bizKey = LikeKeyConstants.setKey(bizType, bizId.toString());
         Long size = stringRedisTemplate.opsForSet().size(bizKey);
         return size == null ? 0 : size.intValue();
+    }
+
+    public Map<Long, Integer> getLikeCountMap(LikeBizType bizType, List<Long> bizIds) {
+        if (bizType == null || bizIds == null || bizIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<Long> effectiveIds = new ArrayList<>(bizIds.size());
+        List<Object> pipelineResults = stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (Long bizId : bizIds) {
+                if (bizId == null) {
+                    continue;
+                }
+                byte[] key = stringRedisTemplate.getStringSerializer()
+                        .serialize(LikeKeyConstants.setKey(bizType, bizId.toString()));
+                if (key != null) {
+                    effectiveIds.add(bizId);
+                    connection.sCard(key);
+                }
+            }
+            return null;
+        });
+
+        Map<Long, Integer> countMap = new HashMap<>(effectiveIds.size());
+        for (int i = 0; i < effectiveIds.size(); i++) {
+            Object raw = i < pipelineResults.size() ? pipelineResults.get(i) : null;
+            int count = raw instanceof Number number ? number.intValue() : 0;
+            countMap.put(effectiveIds.get(i), count);
+        }
+        return countMap;
     }
 
     /**

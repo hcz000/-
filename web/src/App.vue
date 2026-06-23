@@ -17,34 +17,47 @@
 </template>
 
 <script setup>
-import { computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useUserStore } from './stores/useUserStore'
+import { connect, disconnect, on } from './utils/wsClient'
 import SidebarNav from './components/SidebarNav.vue'
 
 const route = useRoute()
 const userStore = useUserStore()
 const isAuthLayout = computed(() => route.meta.layout === 'auth')
 
-// 监听用户登录状态，启动/停止通知轮询
+// 监听用户登录状态，建立/断开全局 WebSocket
+let unsubNotification = null
 watch(
   () => userStore.isAuthenticated,
   (isAuth) => {
     if (isAuth) {
-      // 登录后启动通知轮询（5分钟）
-      userStore.startNotificationPolling(5 * 60 * 1000)
+      connect()
+      // 拉取一次离线期间积压的未读数
+      userStore.fetchUnreadNotificationCount()
+      // 实时推送：收到 NOTIFICATION 时直接 +1
+      unsubNotification = on('NOTIFICATION', () => {
+        userStore.unreadNotificationCount++
+      })
     } else {
-      userStore.stopNotificationPolling()
+      unsubNotification?.()
+      unsubNotification = null
+      disconnect()
     }
   },
   { immediate: true }
 )
 
 onMounted(() => {
-  // 页面加载时，如果已登录，拉取一次未读数
   if (userStore.isAuthenticated) {
     userStore.fetchUnreadNotificationCount()
   }
+})
+
+onUnmounted(() => {
+  unsubNotification?.()
+  disconnect()
 })
 </script>
 

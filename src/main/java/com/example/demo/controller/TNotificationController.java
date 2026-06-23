@@ -7,12 +7,9 @@ import com.example.demo.entity.TNotification;
 import com.example.demo.entity.dto.NotificationResponse;
 import com.example.demo.service.ITNotificationService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.*;
-
-@Api(tags = "通知", description = "提供通知查询、标记已读、删除等功能")
 @RestController
 @RequestMapping("/t-notification")
 public class TNotificationController {

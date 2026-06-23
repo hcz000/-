@@ -3,6 +3,7 @@ package com.example.demo.config;
 import brave.context.slf4j.MDCScopeDecorator;
 import brave.propagation.ThreadLocalCurrentTraceContext;
 import brave.sampler.Sampler;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,9 +22,9 @@ public class TraceConfig {
      * 自定义采样率可以使用 Sampler.create(0.1f) 表示 10% 采样
      */
     @Bean
-    public Sampler defaultSampler() {
+    public Sampler defaultSampler(@Value("${management.tracing.sampling.probability:0.05}") float probability) {
         // 开发环境 100% 采样，生产环境建议降低
-        return Sampler.ALWAYS_SAMPLE;
+        return Sampler.create(Math.max(0f, Math.min(1f, probability)));
     }
 
     /**

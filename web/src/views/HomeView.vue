@@ -37,6 +37,17 @@
         <p class="upload-hint">为你精选正在热议的知识与项目。</p>
       </div>
       <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <el-radio-group
+          v-model="feedMode"
+          :disabled="isSearching || Boolean(selectedPlanetId)"
+          @change="fetchFeed"
+        >
+          <el-radio-button value="a">综合</el-radio-button>
+          <el-radio-button value="interest">兴趣</el-radio-button>
+          <el-radio-button value="hot">热榜</el-radio-button>
+          <el-radio-button value="planet">星球</el-radio-button>
+          <el-radio-button value="friends">好友</el-radio-button>
+        </el-radio-group>
         <el-select
           v-model="selectedPlanetId"
           placeholder="选择星球"
@@ -68,8 +79,8 @@
       style="padding: 12px 18px;"
     >
       <div style="display: flex; align-items: center; gap: 12px;">
-        <el-tag type="success" effect="light">实时推送</el-tag>
-        <span class="upload-hint">来自社区的最新更新已经同步。</span>
+        <el-tag type="success" effect="light">{{ activeFeedModeLabel }}</el-tag>
+        <span class="upload-hint">{{ activeFeedModeHint }}</span>
       </div>
     </el-card>
 
@@ -126,7 +137,7 @@
               <el-tag size="small" effect="light">{{ getSearchTypeLabel(item.bizType) }}</el-tag>
             </div>
             <p v-if="getSearchMeta(item)" class="search-meta">{{ getSearchMeta(item) }}</p>
-            <p class="search-content">{{ getSearchContent(item) }}</p>
+            <p class="search-content" v-html="highlightMentions(getSearchContent(item))"></p>
             <div class="search-actions">
               <el-button
                 v-if="item.bizType === 'post'"
@@ -180,7 +191,7 @@
                     <el-tag size="small" effect="light">{{ getSearchTypeLabel(item.bizType) }}</el-tag>
                   </div>
                   <p v-if="getSearchMeta(item)" class="search-meta">{{ getSearchMeta(item) }}</p>
-                  <p class="search-content">{{ getSearchContent(item) }}</p>
+                  <p class="search-content" v-html="highlightMentions(getSearchContent(item))"></p>
                   <div class="search-actions">
                     <el-button
                       v-if="item.bizType === 'post'"
@@ -238,12 +249,14 @@ import { useFeedStore } from '../stores/useFeedStore'
 import PostCard from '../components/PostCard.vue'
 import ContextMenu from '../components/ContextMenu.vue'
 import { http } from '../api/http'
+import { highlightMentions } from '../utils/mentionFormatter'
 
 const router = useRouter()
 const feedStore = useFeedStore()
 const keyword = ref('')
 const planets = ref([])
 const selectedPlanetId = ref('')
+const feedMode = ref('a')
 const planetLoading = ref(false)
 const planetError = ref('')
 const searchType = ref('')
@@ -276,6 +289,21 @@ const searchTotal = computed(() =>
   + (searchResults.value.planets.length || 0)
   + (searchResults.value.users.length || 0)
 )
+const feedModeMeta = {
+  a: { label: '综合推送', hint: '兴趣优先，热榜补充，随机兜底。' },
+  interest: { label: '兴趣推送', hint: '按你的兴趣模型分发内容。' },
+  hot: { label: '热榜推送', hint: '来自 Redis 热榜的高热帖子。' },
+  planet: { label: '星球推送', hint: '来自你已加入星球的最新帖子。' },
+  friends: { label: '好友动态', hint: '来自好友发布的最新帖子。' }
+}
+const activeFeedModeLabel = computed(() => {
+  if (selectedPlanetId.value) return '星球列表'
+  return feedModeMeta[feedMode.value]?.label || feedModeMeta.a.label
+})
+const activeFeedModeHint = computed(() => {
+  if (selectedPlanetId.value) return '正在查看选中星球里的公开帖子。'
+  return feedModeMeta[feedMode.value]?.hint || feedModeMeta.a.hint
+})
 
 const fetchPlanets = async () => {
   planetLoading.value = true
@@ -352,7 +380,7 @@ const fetchFeed = () => {
     })
   } else {
     // 默认使用推送
-    feedStore.fetchPush()
+    feedStore.fetchPush(feedMode.value)
   }
 }
 
@@ -369,7 +397,7 @@ const triggerFetch = () => {
 onMounted(() => {
   fetchPlanets()
   // 默认加载推送帖子
-  feedStore.fetchPush()
+  feedStore.fetchPush(feedMode.value)
 })
 
 watch([selectedPlanetId, keyword, searchType], () => {

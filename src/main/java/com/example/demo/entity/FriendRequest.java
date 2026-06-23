@@ -7,20 +7,17 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import io.swagger.annotations.ApiModel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
-
 @Data
 @EqualsAndHashCode(callSuper = false)
 @Accessors(chain = true)
 @Entity
 @Table(name = "friend_request")
-@ApiModel(value = "FriendRequest对象", description = "好友请求")
+
 public class FriendRequest implements Serializable {
 
     private static final long serialVersionUID = 1L;

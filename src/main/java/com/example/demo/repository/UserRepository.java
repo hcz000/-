@@ -21,14 +21,14 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
     User selectByIdForUpdate(@Param("id") Long id);
 
     @Query(value = """
-            SELECT id, username, password, email, avatar, create_time, update_time, liketype, role, deleted,
-                   GREATEST(similarity(coalesce(username, ''), :keyword),
-                            similarity(coalesce(email, ''), :keyword)) as relevance
+            SELECT id, username, password, email, avatar, create_time, update_time, role, deleted,
+                   MATCH(username, email) AGAINST (:keyword IN NATURAL LANGUAGE MODE) AS relevance
             FROM users
             WHERE deleted = false
               AND (
-                    coalesce(username, '') ILIKE CONCAT('%', :keyword, '%')
-                 OR coalesce(email, '') ILIKE CONCAT('%', :keyword, '%')
+                    MATCH(username, email) AGAINST (:keyword IN NATURAL LANGUAGE MODE)
+                 OR username LIKE CONCAT('%', :keyword, '%')
+                 OR email LIKE CONCAT('%', :keyword, '%')
               )
             ORDER BY relevance DESC, create_time DESC
             LIMIT :pageSize OFFSET :offset

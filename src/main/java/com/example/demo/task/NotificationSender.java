@@ -15,8 +15,8 @@ public class NotificationSender {
     private RabbitTemplate rabbitTemplate;
 
     public void notifyPostLike(Long senderId, Long recipientId, Long postId, String postTitle) {
-        String content = "有人点赞了你的帖子：" + shorten(postTitle);
-        send(senderId, recipientId, NotificationType.POST_LIKE, postId, null, content);
+        send(senderId, recipientId, NotificationType.POST_LIKE, postId, null,
+                "有人点赞了你的帖子：" + shorten(postTitle));
     }
 
     public void notifyPostComment(Long senderId, Long recipientId, Long postId, Long commentId, String content) {
@@ -30,29 +30,36 @@ public class NotificationSender {
     }
 
     public void notifyCommentMention(Long senderId, Long recipientId, Long postingsId, Long commentId, String content) {
-        send(senderId, recipientId, NotificationType.COMMENT_MENTION, postingsId, buildMentionLink(postingsId, commentId), content);
+        send(senderId, recipientId, NotificationType.COMMENT_MENTION,
+                postingsId, buildMentionLink(postingsId, commentId), content);
     }
 
-    /**
-     * 星球新帖子通知
-     * @param senderId 发帖者ID
-     * @param recipientId 接收者ID（星球成员）
-     * @param planetId 星球ID
-     * @param postId 帖子ID
-     * @param planetName 星球名称
-     * @param postTitle 帖子标题
-     */
-    public void notifyPlanetNewPost(Long senderId, Long recipientId, Long planetId, Long postId, String planetName, String postTitle) {
-        String relatedId = "/planets/" + planetId;
-        String content = planetName + " 有新帖子：" + shorten(postTitle);
-        send(senderId, recipientId, NotificationType.PLANET_NEW_POST, postId, relatedId, content);
+    public void notifyPlanetNewPost(Long senderId, Long recipientId, Long planetId, Long postId,
+                                    String planetName, String postTitle) {
+        send(senderId, recipientId, NotificationType.PLANET_NEW_POST, postId, "/planets/" + planetId,
+                planetName + " 有新帖子：" + shorten(postTitle));
     }
 
-    private void send(Long senderId, Long recipientId, NotificationType type, Long postId, String relatedId, String content) {
-        if (senderId == null || recipientId == null) {
+    public void notifyFriendRequestAccepted(Long senderId, Long recipientId, Long requestId) {
+        send(senderId, recipientId, NotificationType.FRIEND_REQUEST_ACCEPTED, null,
+                requestId == null ? null : String.valueOf(requestId), "你的好友申请已通过");
+    }
+
+    public void notifyFriendRequestRejected(Long senderId, Long recipientId, Long requestId) {
+        send(senderId, recipientId, NotificationType.FRIEND_REQUEST_REJECTED, null,
+                requestId == null ? null : String.valueOf(requestId), "你的好友申请被拒绝");
+    }
+
+    public void notifySystem(Long recipientId, Long postId, String relatedId, String content) {
+        send(null, recipientId, NotificationType.SYSTEM, postId, relatedId, content);
+    }
+
+    private void send(Long senderId, Long recipientId, NotificationType type,
+                      Long postId, String relatedId, String content) {
+        if (recipientId == null || type == null) {
             return;
         }
-        if (senderId.equals(recipientId)) {
+        if (senderId != null && senderId.equals(recipientId)) {
             return;
         }
         NotificationMessage message = new NotificationMessage(
@@ -65,7 +72,7 @@ public class NotificationSender {
         try {
             rabbitTemplate.convertAndSend(CommentTopics.NOTIFICATION, message.serialize());
         } catch (Exception e) {
-            log.warn("为接收者 {} 发送通知入队失败", recipientId, e);
+            log.warn("send notification failed, recipientId={}, type={}", recipientId, type, e);
         }
     }
 

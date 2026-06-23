@@ -1,6 +1,7 @@
 package com.example.demo.service.Impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.example.demo.config.CacheConfig;
 import com.example.demo.entity.Planet;
 import com.example.demo.entity.PlanetMember;
 import com.example.demo.entity.User;
@@ -11,6 +12,10 @@ import com.example.demo.repository.UserRepository;
 import com.example.demo.service.IPlanetService;
 import jakarta.annotation.Resource;
 import jakarta.persistence.criteria.Predicate;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -35,9 +40,11 @@ public class PlanetServiceImpl implements IPlanetService {
     private PlanetRepository planetRepository;
     @Resource
     private PlanetMemberRepository planetMemberRepository;
+    @Resource
+    private CacheManager cacheManager;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Planet createPlanet(Planet planet) {
         if (planet == null || !StringUtils.hasText(planet.getName())) {
             throw new BusinessException("星球名称不能为空");
@@ -63,6 +70,7 @@ public class PlanetServiceImpl implements IPlanetService {
     }
 
     @Override
+    @Cacheable(value = CacheConfig.CACHE_PLANET, key = "#planetId", unless = "#result == null")
     public Planet getPlanet(Long planetId) {
         Planet planet = planetRepository.findById(planetId).orElse(null);
         if (planet == null || Boolean.TRUE.equals(planet.getDeleted())) {
@@ -72,7 +80,8 @@ public class PlanetServiceImpl implements IPlanetService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = CacheConfig.CACHE_PLANET, key = "#planetId")
     public void removePlanet(Long planetId) {
         Planet planet = getPlanet(planetId);
         planet.setDeleted(true);
@@ -154,7 +163,8 @@ public class PlanetServiceImpl implements IPlanetService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {CacheConfig.CACHE_PLANET, CacheConfig.CACHE_PLANET_MEMBER}, key = "#planetId")
     public void joinPlanet(Long planetId, Long userId) {
         Planet planet = getPlanet(planetId);
         User user = loadUser(userId);
@@ -174,7 +184,8 @@ public class PlanetServiceImpl implements IPlanetService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {CacheConfig.CACHE_PLANET, CacheConfig.CACHE_PLANET_MEMBER}, key = "#planetId")
     public void leavePlanet(Long planetId, Long userId) {
         Planet planet = getPlanet(planetId);
         User user = loadUser(userId);
@@ -190,6 +201,7 @@ public class PlanetServiceImpl implements IPlanetService {
     }
 
     @Override
+    @Cacheable(value = CacheConfig.CACHE_PLANET_MEMBER, key = "#planetId + ':' + #userId")
     public boolean isMember(Long planetId, Long userId) {
         if (planetId == null || userId == null) {
             return false;

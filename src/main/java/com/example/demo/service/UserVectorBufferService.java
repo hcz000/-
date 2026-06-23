@@ -99,9 +99,10 @@ public class UserVectorBufferService {
 
         int appliedEvents = userVectorService.applyUserVectorBatch(userId, postingTypes);
 
-        // DB 落库成功后才删除已处理的事件
+        // DB 落库成功后，删除已处理的事件并主动失效兴趣向量缓存
         if (appliedEvents > 0) {
             trimProcessedEvents(listKey, rawEvents.size());
+            userVectorService.evictTypeRatiosCache(userId);
         }
 
         // 使用 Lua 脚本原子性检查队列并处理 dirty 标记，消除竞态窗口

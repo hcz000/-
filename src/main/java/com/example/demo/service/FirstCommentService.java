@@ -18,7 +18,7 @@ public class FirstCommentService {
     private PostingsRepository postingsRepository;
 
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public boolean recordFirstComment(Long postingsId, Long commentId) {
         if (postingsId == null || commentId == null) {
             return false;

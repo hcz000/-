@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * 搜索服务实现类
- * 使用 PostgreSQL 全文搜索（GIN 倒排索引）
+ * 使用 MySQL 8 InnoDB FULLTEXT + ngram parser 搜索
  */
 @Service
 public class SearchServiceImpl implements SearchService {

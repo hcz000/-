@@ -1,10 +1,14 @@
 package com.example.demo.service.Impl;
 
+import com.example.demo.config.CacheConfig;
 import com.example.demo.entity.TNotification;
 import com.example.demo.repository.TNotificationRepository;
 import com.example.demo.service.ITNotificationService;
 import jakarta.annotation.Resource;
 import jakarta.persistence.criteria.Predicate;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +25,8 @@ public class TNotificationServiceImpl implements ITNotificationService {
 
     @Resource
     private TNotificationRepository notificationRepository;
+    @Resource
+    private CacheManager cacheManager;
 
     @Override
     public Page<TNotification> pageNotifications(Long userId, int pageNum, int pageSize, Boolean readFlag) {
@@ -37,7 +43,8 @@ public class TNotificationServiceImpl implements ITNotificationService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = CacheConfig.CACHE_UNREAD_COUNT, key = "#userId")
     public boolean markAsRead(Long userId, Long notificationId) {
         TNotification notification = notificationRepository.findById(notificationId).orElse(null);
         if (notification == null || !userId.equals(notification.getRecipientId())) {
@@ -49,7 +56,8 @@ public class TNotificationServiceImpl implements ITNotificationService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = CacheConfig.CACHE_UNREAD_COUNT, key = "#userId")
     public boolean deleteNotification(Long userId, Long notificationId) {
         TNotification notification = notificationRepository.findById(notificationId).orElse(null);
         if (notification == null || !userId.equals(notification.getRecipientId())) {
@@ -60,7 +68,8 @@ public class TNotificationServiceImpl implements ITNotificationService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = CacheConfig.CACHE_UNREAD_COUNT, key = "#userId")
     public void clearNotifications(Long userId) {
         Specification<TNotification> spec = (root, query, cb) -> {
             Predicate predicate = cb.equal(root.get("recipientId"), userId);
@@ -70,6 +79,7 @@ public class TNotificationServiceImpl implements ITNotificationService {
     }
 
     @Override
+    @Cacheable(value = CacheConfig.CACHE_UNREAD_COUNT, key = "#userId")
     public int getUnreadCount(Long userId) {
         Specification<TNotification> spec = (root, query, cb) -> {
             Predicate predicate = cb.conjunction();

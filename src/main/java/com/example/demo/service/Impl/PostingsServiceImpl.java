@@ -4,11 +4,13 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.example.demo.config.CacheConfig;
 import com.example.demo.entity.Planet;
 import com.example.demo.entity.Postings;
+import com.example.demo.entity.dto.CursorPage;
 import com.example.demo.enums.LikeBizType;
 import com.example.demo.enums.PostingType;
 import com.example.demo.exception.BusinessException;
-import com.example.demo.repository.PlanetMemberRepository;
 import com.example.demo.repository.PostingsRepository;
+import com.example.demo.service.CandidatePoolService;
+import com.example.demo.service.HotRankService;
 import com.example.demo.service.IPlanetService;
 import com.example.demo.service.IPostingsService;
 import com.example.demo.service.ISensitiveWordService;
@@ -26,6 +28,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,12 +63,14 @@ public class PostingsServiceImpl implements IPostingsService {
     @Resource
     private ReplyCountBufferTrigger replyCountBufferTrigger;
     @Resource
-    private PostingsRepository postingsRepository;
+    private CandidatePoolService candidatePoolService;
     @Resource
-    private PlanetMemberRepository planetMemberRepository;
+    private HotRankService hotRankService;
+    @Resource
+    private PostingsRepository postingsRepository;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Postings createPost(Postings postings) {
         log.debug("createPost 开始验证帖子参数 planetId: {}", postings.getPlanetId());
         validatePostRequest(postings);
@@ -92,7 +97,11 @@ public class PostingsServiceImpl implements IPostingsService {
         postings.setUpdateTime(now);
         postingsRepository.save(postings);
 
-        notifyPlanetMembers(postings, planet, userId);
+        // 审核通过且状态正常时加入候选池 + 缓存详情
+        if (postings.getAuditStatus() == 1 && postings.getStatus() == 1) {
+            candidatePoolService.addToPools(postings);
+            hotRankService.refreshPost(postings);
+        }
 
         return postings;
     }
@@ -110,7 +119,7 @@ public class PostingsServiceImpl implements IPostingsService {
 
     @Override
     @CacheEvict(value = CacheConfig.CACHE_POSTINGS, key = "#postings.postingsId")
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public Postings updatePost(Postings postings) {
         if (postings == null || postings.getPostingsId() == null) {
             throw new BusinessException("post id must not be null");
@@ -132,12 +141,14 @@ public class PostingsServiceImpl implements IPostingsService {
 
     @Override
     @CacheEvict(value = CacheConfig.CACHE_POSTINGS, key = "#postingsId")
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void removePost(Long postingsId) {
         Postings post = getPost(postingsId);
         post.setDeleted(true);
         post.setUpdateTime(LocalDateTime.now());
         postingsRepository.save(post);
+        candidatePoolService.removeFromPools(postingsId, post.getType());
+        hotRankService.remove(postingsId);
     }
 
     @Override
@@ -151,21 +162,50 @@ public class PostingsServiceImpl implements IPostingsService {
             predicate = cb.and(predicate, cb.equal(root.get("planetId"), planetId));
             predicate = cb.and(predicate, cb.equal(root.get("deleted"), false));
             predicate = cb.and(predicate, cb.equal(root.get("status"), 1));
-            predicate = cb.and(predicate, cb.equal(root.get("auditStatus"), 1)); // 只显示已审核通过
+            predicate = cb.and(predicate, cb.equal(root.get("auditStatus"), 1));
             return predicate;
         };
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, Sort.by(Sort.Direction.DESC, "createTime"));
         Page<Postings> result = postingsRepository.findAll(spec, pageable);
-        if (result != null && result.getContent() != null) {
-            result.getContent().forEach(record -> {
-                if (record == null) {
-                    return;
-                }
-                record.setLikeCount(likeService.getLikeCount(LikeBizType.POST, record.getPostingsId()));
-                record.setReplyCount(loadReplyCount(record.getPostingsId(), record.getReplyCount()));
-            });
-        }
+        hydratePostMetrics(result == null ? null : result.getContent());
         return result;
+    }
+
+    @Override
+    public CursorPage<Postings> listByPlanetIdCursor(Long planetId, LocalDateTime cursor, Long lastId, int size) {
+        if (planetId == null) {
+            throw new BusinessException("planetId must not be null");
+        }
+        planetService.getPlanet(planetId);
+
+        Specification<Postings> spec = (root, query, cb) -> {
+            Predicate predicate = cb.conjunction();
+            predicate = cb.and(predicate, cb.equal(root.get("planetId"), planetId));
+            predicate = cb.and(predicate, cb.equal(root.get("deleted"), false));
+            predicate = cb.and(predicate, cb.equal(root.get("status"), 1));
+            predicate = cb.and(predicate, cb.equal(root.get("auditStatus"), 1));
+
+            // 游标条件：(create_time < cursor) OR (create_time = cursor AND postings_id < lastId)
+            if (cursor != null && lastId != null) {
+                Predicate timeLess = cb.lessThan(root.get("createTime"), cursor);
+                Predicate timeEqual = cb.equal(root.get("createTime"), cursor);
+                Predicate idLess = cb.lessThan(root.get("postingsId"), lastId);
+                predicate = cb.and(predicate, cb.or(timeLess, cb.and(timeEqual, idLess)));
+            }
+            return predicate;
+        };
+
+        // 多取一条用于判断 hasMore
+        Pageable pageable = PageRequest.of(0, size + 1, Sort.by(Sort.Direction.DESC, "createTime"));
+        List<Postings> results = postingsRepository.findAll(spec, pageable).getContent();
+
+        boolean hasMore = results.size() > size;
+        if (hasMore) {
+            results = results.subList(0, size);
+        }
+
+        hydratePostMetrics(results);
+        return CursorPage.of(results, hasMore);
     }
 
     @Override
@@ -176,6 +216,7 @@ public class PostingsServiceImpl implements IPostingsService {
         if (like && result.changed() && !userId.equals(post.getUserId())) {
             notificationSender.notifyPostLike(userId, post.getUserId(), postingsId, post.getTitle());
         }
+        hotRankService.touchPost(postingsId);
         return result.count();
     }
 
@@ -199,15 +240,7 @@ public class PostingsServiceImpl implements IPostingsService {
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize);
         Page<Postings> page = new PageImpl<>(records, pageable, total);
 
-        if (records != null) {
-            records.forEach(record -> {
-                if (record == null) {
-                    return;
-                }
-                record.setLikeCount(likeService.getLikeCount(LikeBizType.POST, record.getPostingsId()));
-                record.setReplyCount(loadReplyCount(record.getPostingsId(), record.getReplyCount()));
-            });
-        }
+        hydratePostMetrics(records);
         return page;
     }
 
@@ -237,6 +270,7 @@ public class PostingsServiceImpl implements IPostingsService {
         }
 
         List<Postings> posts = postingsRepository.findAllById(pageIds);
+        hydratePostMetrics(posts);
         Map<Long, Postings> postById = new HashMap<>();
         for (Postings post : posts) {
             if (post != null && !Boolean.TRUE.equals(post.getDeleted())) {
@@ -248,8 +282,6 @@ public class PostingsServiceImpl implements IPostingsService {
         for (Long id : pageIds) {
             Postings post = postById.get(id);
             if (post != null) {
-                post.setLikeCount(likeService.getLikeCount(LikeBizType.POST, post.getPostingsId()));
-                post.setReplyCount(loadReplyCount(post.getPostingsId(), post.getReplyCount()));
                 ordered.add(post);
             }
         }
@@ -282,6 +314,80 @@ public class PostingsServiceImpl implements IPostingsService {
             }
         }
         return fallback == null ? 0 : fallback;
+    }
+
+    private void hydratePostMetrics(List<Postings> posts) {
+        if (posts == null || posts.isEmpty()) {
+            return;
+        }
+        List<Long> postIds = new ArrayList<>(posts.size());
+        for (Postings post : posts) {
+            if (post != null && post.getPostingsId() != null) {
+                postIds.add(post.getPostingsId());
+            }
+        }
+        if (postIds.isEmpty()) {
+            return;
+        }
+        Map<Long, Integer> likeCountMap = likeService.getLikeCountMap(LikeBizType.POST, postIds);
+        Map<Long, Integer> replyCountMap = loadReplyCountMap(postIds);
+        for (Postings post : posts) {
+            if (post == null || post.getPostingsId() == null) {
+                continue;
+            }
+            Long postId = post.getPostingsId();
+            post.setLikeCount(likeCountMap.getOrDefault(postId, 0));
+            post.setReplyCount(replyCountMap.getOrDefault(postId, post.getReplyCount() == null ? 0 : post.getReplyCount()));
+        }
+    }
+
+    private Map<Long, Integer> loadReplyCountMap(List<Long> postingsIds) {
+        if (postingsIds == null || postingsIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> effectiveIds = new ArrayList<>(postingsIds.size());
+        List<Object> pipelineResults = stringRedisTemplate.executePipelined((RedisCallback<Object>) connection -> {
+            for (Long postingsId : postingsIds) {
+                if (postingsId == null) {
+                    continue;
+                }
+                byte[] key = stringRedisTemplate.getStringSerializer()
+                        .serialize(REPLY_COUNT_KEY_PREFIX + postingsId);
+                if (key != null) {
+                    effectiveIds.add(postingsId);
+                    connection.stringCommands().get(key);
+                }
+            }
+            return null;
+        });
+
+        Map<Long, Integer> countMap = new HashMap<>(effectiveIds.size());
+        for (int i = 0; i < effectiveIds.size(); i++) {
+            Object raw = i < pipelineResults.size() ? pipelineResults.get(i) : null;
+            Integer parsed = parseReplyCount(raw);
+            if (parsed != null) {
+                countMap.put(effectiveIds.get(i), parsed);
+            }
+        }
+        return countMap;
+    }
+
+    private Integer parseReplyCount(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof byte[] bytes) {
+            raw = stringRedisTemplate.getStringSerializer().deserialize(bytes);
+        }
+        if (raw instanceof String text && StringUtils.hasText(text)) {
+            try {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return raw instanceof Number number ? number.intValue() : null;
     }
 
     private void validatePostRequest(Postings postings) {
@@ -338,28 +444,6 @@ public class PostingsServiceImpl implements IPostingsService {
             throw new BusinessException("user not logged in");
         }
         return StpUtil.getLoginIdAsLong();
-    }
-
-    private void notifyPlanetMembers(Postings postings, Planet planet, Long senderId) {
-        List<Long> memberIds = planetMemberRepository.findUserIdsByPlanetId(planet.getPlanetId());
-        if (memberIds.isEmpty()) {
-            return;
-        }
-        String planetName = planet.getName();
-        String postTitle = postings.getTitle();
-        Long planetId = postings.getPlanetId();
-        Long postId = postings.getPostingsId();
-
-        for (Long memberId : memberIds) {
-            if (memberId.equals(senderId)) {
-                continue;
-            }
-            try {
-                notificationSender.notifyPlanetNewPost(senderId, memberId, planetId, postId, planetName, postTitle);
-            } catch (Exception e) {
-                log.warn("notify planet member {} new post failed", memberId, e);
-            }
-        }
     }
 
     @Override

@@ -7,14 +7,10 @@ import com.example.demo.enums.LikeBizType;
 import com.example.demo.service.ISecondaryCommentService;
 import com.example.demo.service.LikeService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.HashMap;
 import java.util.Map;
-
-@Api(tags = "二级评论接口", description = "提供一级评论的二级回复发布、删除、点赞、查询等功能")
 @RestController
 @RequestMapping("/secondary-comment0")
 public class SecondaryCommentController {

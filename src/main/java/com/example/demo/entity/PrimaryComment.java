@@ -8,14 +8,11 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
-import io.swagger.annotations.ApiModel;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
-
 /**
  * 一级评论
  */
@@ -24,7 +21,7 @@ import java.time.LocalDateTime;
 @Accessors(chain = true)
 @Entity
 @Table(name = "primary_comment")
-@ApiModel(value="PrimaryComment对象", description="一级评论")
+
 public class PrimaryComment implements Serializable {
 
     private static final long serialVersionUID = 1L;

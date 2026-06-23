@@ -13,13 +13,11 @@ public class UserVectorFlushTask {
     @Resource
     private UserVectorBufferService userVectorBufferService;
 
-    // 鏆傛椂绂佺敤瀹氭椂浠诲姟锛岄伩鍏?liketype 鏁扮粍绫诲瀷閿欒
     @Scheduled(fixedDelayString = "${user-vector.flush.delay-ms:1000}")
     public void flushBufferedVectors() {
         UserVectorBufferService.FlushStats stats = userVectorBufferService.flushOnce(200, 128);
         if (stats.events() > 0) {
-            log.info("User vector flush done: users={}, events={}", stats.users(), stats.events());
+            log.info("User interest model flush done: users={}, events={}", stats.users(), stats.events());
         }
     }
 }
-

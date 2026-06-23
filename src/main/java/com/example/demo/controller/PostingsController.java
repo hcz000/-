@@ -8,8 +8,8 @@ import com.example.demo.enums.LikeBizType;
 import com.example.demo.service.IPostingsService;
 import com.example.demo.service.LikeService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.*;
 import jakarta.annotation.Resource;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,12 +21,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
 /**
  * 帖子相关接口
  * 提供帖子创建、查询、点赞等功能
  */
-@Api(tags = "帖子管理", description = "提供帖子的创建、查询、点赞、删除等接口")
+
 @RestController
 @RequestMapping("/postings")
 public class PostingsController {
@@ -84,11 +83,15 @@ public class PostingsController {
 
     @GetMapping
     public SaResult listByPlanet(@RequestParam Long planetId,
-                                 @RequestParam(required = false) Integer page,
+                                 @RequestParam(required = false) LocalDateTime cursor,
+                                 @RequestParam(required = false) Long lastId,
                                  @RequestParam(required = false) Integer size) {
-        int p = PageParamUtil.resolvePage(page, null);
         int s = PageParamUtil.resolveSize(size, null, 10, 100);
-        return SaResult.ok().setData(postingsService.listByPlanetId(planetId, p, s));
+        if (cursor != null && lastId != null) {
+            return SaResult.ok().setData(postingsService.listByPlanetIdCursor(planetId, cursor, lastId, s));
+        }
+        // 首页或兼容旧版 offset 分页
+        return SaResult.ok().setData(postingsService.listByPlanetIdCursor(planetId, null, null, s));
     }
 
     @GetMapping("/search")

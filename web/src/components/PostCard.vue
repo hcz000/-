@@ -19,7 +19,7 @@
           <span>{{ likeCount }}</span>
         </div>
       </div>
-      <p v-if="summary" class="post-summary">{{ summary }}</p>
+      <p v-if="summary" class="post-summary" v-html="highlightMentions(summary)"></p>
       <div v-if="hasImages" class="post-images">
         <el-image
           v-for="(img, idx) in normalizedImages"
@@ -75,6 +75,7 @@ import HeartIcon from './HeartIcon.vue'
 import ContextMenu from './ContextMenu.vue'
 import ReportDialog from './ReportDialog.vue'
 import { useUserStore } from '../stores/useUserStore'
+import { highlightMentions } from '../utils/mentionFormatter'
 
 const props = defineProps({
   post: {

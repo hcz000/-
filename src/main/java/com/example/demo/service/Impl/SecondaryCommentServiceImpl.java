@@ -30,6 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 
 @Slf4j
@@ -56,7 +59,7 @@ public class SecondaryCommentServiceImpl implements ISecondaryCommentService {
     private SecondaryCommentRepository secondaryCommentRepository;
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public SecondaryComment createComment(SecondaryComment comment) {
         validateComment(comment);
 
@@ -99,7 +102,7 @@ public class SecondaryCommentServiceImpl implements ISecondaryCommentService {
     }
 
     @Override
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void removeComment(Long commentId) {
         SecondaryComment existing = getExistingComment(commentId);
         existing.setDeleted(true);
@@ -119,14 +122,15 @@ public class SecondaryCommentServiceImpl implements ISecondaryCommentService {
         };
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, Sort.by(Sort.Direction.DESC, "createTime"));
         Page<SecondaryComment> result = secondaryCommentRepository.findAll(spec, pageable);
+        Map<Long, Integer> likeCountMap = likeService.getLikeCountMap(
+                LikeBizType.SECONDARY_COMMENT, collectSecondaryCommentIds(result));
         if (result != null && result.getContent() != null) {
             result.getContent().forEach(record -> {
                 if (record != null) {
-                    record.setLikeCount(likeService.getLikeCount(LikeBizType.SECONDARY_COMMENT, record.getId()));
+                    record.setLikeCount(likeCountMap.getOrDefault(record.getId(), 0));
                 }
             });
         }
-        System.out.println("listByPrimaryComment query done");
         return result;
     }
 
@@ -223,6 +227,19 @@ public class SecondaryCommentServiceImpl implements ISecondaryCommentService {
         } catch (Exception e) {
             log.warn("更新用户兴趣向量失败: userId={}, postingsId={}, error={}", userId, postingsId, e.getMessage());
         }
+    }
+
+    private List<Long> collectSecondaryCommentIds(Page<SecondaryComment> page) {
+        if (page == null || page.getContent() == null || page.getContent().isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = new ArrayList<>(page.getContent().size());
+        for (SecondaryComment comment : page.getContent()) {
+            if (comment != null && comment.getId() != null) {
+                ids.add(comment.getId());
+            }
+        }
+        return ids;
     }
 
     @Override

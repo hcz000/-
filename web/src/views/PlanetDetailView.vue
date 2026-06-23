@@ -76,6 +76,14 @@
           :post="post"
           @deleted="handlePostDeleted"
         />
+        <div v-if="hasMore" class="load-more-wrapper">
+          <el-button :loading="postsLoading" round @click="loadMorePosts">
+            加载更多
+          </el-button>
+        </div>
+        <div v-else-if="posts.length > 0" class="load-more-wrapper">
+          <span class="upload-hint">没有更多帖子了</span>
+        </div>
       </div>
     </el-card>
 
@@ -184,6 +192,7 @@ const planet = ref(null)
 const members = ref([])
 const membersTotal = ref(0)
 const posts = ref([])
+const hasMore = ref(false)
 const isLoading = ref(false)
 const membersLoading = ref(false)
 const postsLoading = ref(false)
@@ -284,11 +293,39 @@ const fetchMembers = async () => {
 const fetchPosts = async () => {
   postsLoading.value = true
   try {
-    const data = await http.get(`/postings?planetId=${planetId.value}&pageNum=1&pageSize=20`)
-    posts.value = Array.isArray(data) ? data : data?.records || []
+    const data = await http.get(`/postings?planetId=${planetId.value}&size=20`)
+    const records = Array.isArray(data) ? data : data?.records || []
+    posts.value = records
+    hasMore.value = data?.hasMore ?? false
   } catch (error) {
     errorMessage.value = error.message || '加载帖子失败'
     posts.value = []
+    hasMore.value = false
+  } finally {
+    postsLoading.value = false
+  }
+}
+
+const loadMorePosts = async () => {
+  if (!hasMore.value || postsLoading.value || posts.value.length === 0) return
+  const lastPost = posts.value[posts.value.length - 1]
+  const cursor = lastPost.createTime
+  const lastId = lastPost.postingsId || lastPost.id
+  if (!cursor || !lastId) return
+
+  postsLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    params.set('planetId', String(planetId.value))
+    params.set('cursor', cursor)
+    params.set('lastId', String(lastId))
+    params.set('size', '20')
+    const data = await http.get(`/postings?${params.toString()}`)
+    const records = Array.isArray(data) ? data : data?.records || []
+    posts.value = [...posts.value, ...records]
+    hasMore.value = data?.hasMore ?? false
+  } catch (error) {
+    errorMessage.value = error.message || '加载更多失败'
   } finally {
     postsLoading.value = false
   }
@@ -624,5 +661,11 @@ onMounted(() => {
   font-size: 12px;
   color: var(--muted);
   margin-top: 8px;
+}
+
+.load-more-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0 4px;
 }
 </style>

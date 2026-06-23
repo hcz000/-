@@ -2,16 +2,14 @@ package com.example.demo.service;
 
 import com.example.demo.entity.FriendRelation;
 import com.example.demo.entity.FriendRequest;
-import com.example.demo.entity.TNotification;
 import com.example.demo.entity.User;
 import com.example.demo.entity.dto.FriendSummary;
 import com.example.demo.enums.FriendRequestStatus;
-import com.example.demo.enums.NotificationType;
 import com.example.demo.exception.BusinessException;
 import com.example.demo.repository.FriendRelationRepository;
 import com.example.demo.repository.FriendRequestRepository;
-import com.example.demo.repository.TNotificationRepository;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.task.NotificationSender;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -40,10 +38,10 @@ public class FriendService {
     @Resource
     private UserRepository userRepository;
     @Resource
-    private TNotificationRepository notificationRepository;
+    private NotificationSender notificationSender;
 
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void sendFriendRequest(Long requesterId, Long targetUserId, String message) {
         if (targetUserId == null) {
             throw new BusinessException("目标用户不能为空");
@@ -69,7 +67,7 @@ public class FriendService {
         friendRequestRepository.save(request);
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public void respondFriendRequest(Long requestId, Long operatorId, boolean accept) {
         log.info("[friend.respond] requestId={}, operatorId={}, accept={}", requestId, operatorId, accept);
         FriendRequest request = friendRequestRepository.findById(requestId).orElse(null);
@@ -94,26 +92,9 @@ public class FriendService {
         friendRequestRepository.save(request);
         if (accept) {
             createRelation(request.getRequesterId(), request.getTargetId(), now);
-            TNotification notification = new TNotification();
-            // 通知应该发给申请发起方（requester），而不是处理方（target）
-            notification.setSenderId(request.getTargetId());
-            notification.setRecipientId(request.getRequesterId());
-            notification.setRelatedId(String.valueOf(requestId));
-            notification.setType(NotificationType.FRIEND_REQUEST_ACCEPTED.getCode());
-            notification.setContent("你的好友申请已通过");
-            notification.setCreateTime(now);
-            notification.setReadFlag(false);
-            notificationRepository.save(notification);
+            notificationSender.notifyFriendRequestAccepted(request.getTargetId(), request.getRequesterId(), requestId);
         } else {
-            TNotification notification = new TNotification();
-            notification.setSenderId(request.getTargetId());
-            notification.setRecipientId(request.getRequesterId());
-            notification.setRelatedId(String.valueOf(requestId));
-            notification.setType(NotificationType.FRIEND_REQUEST_REJECTED.getCode());
-            notification.setContent("你的好友申请被拒绝");
-            notification.setCreateTime(now);
-            notification.setReadFlag(false);
-            notificationRepository.save(notification);
+            notificationSender.notifyFriendRequestRejected(request.getTargetId(), request.getRequesterId(), requestId);
         }
     }
 
@@ -165,7 +146,7 @@ public class FriendService {
     }
 
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     private void createRelation(Long userId, Long friendId, LocalDateTime now) {
         Long[] pair = normalizePair(userId, friendId);
         // 查是否有过好友关系（含已软删除的）

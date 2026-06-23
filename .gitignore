@@ -32,6 +32,10 @@ build/
 ### VS Code ###
 .vscode/
 
+### Logs ###
+*.log
+logs/
+
 ### YAML files ###
 *.yml
 *.yaml

@@ -6,11 +6,8 @@ import com.example.demo.entity.dto.ChatMessageResponse;
 import com.example.demo.entity.dto.ChatMessageSendRequest;
 import com.example.demo.service.ChatService;
 import com.example.demo.util.PageParamUtil;
-import io.swagger.annotations.Api;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.*;
-
-@Api(tags = "聊天", description = "提供好友聊天功能")
 @RestController
 @RequestMapping("/chat")
 public class ChatController {

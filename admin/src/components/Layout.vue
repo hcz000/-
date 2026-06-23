@@ -50,6 +50,20 @@
             <el-icon><Lock /></el-icon>
             <span v-show="!isCollapse">敏感词管理</span>
           </el-menu-item>
+          <el-menu-item index="/audit-queue">
+            <el-icon><Tickets /></el-icon>
+            <span v-show="!isCollapse">审核队列</span>
+          </el-menu-item>
+
+          <el-menu-item index="/system-config">
+            <el-icon><Setting /></el-icon>
+            <span v-show="!isCollapse">系统配置</span>
+          </el-menu-item>
+
+          <el-menu-item index="/push-status">
+            <el-icon><TrendCharts /></el-icon>
+            <span v-show="!isCollapse">推送状态</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
       
@@ -105,6 +119,9 @@ import {
   Grid,
   Lock,
   WarningFilled,
+  Tickets,
+  Setting,
+  TrendCharts,
   Fold,
   Expand,
   Comment,
