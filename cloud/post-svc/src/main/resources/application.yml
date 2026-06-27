@@ -12,15 +12,7 @@ spring:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
       - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
 
-  cloud:
-    nacos:
-      discovery:
-        enabled: false
-        server-addr: localhost:8848
-      config:
-        enabled: false
-        server-addr: localhost:8848
-        file-extension: yml
+  # Nacos 相关配置见 bootstrap.yml
 
 management:
   endpoints:

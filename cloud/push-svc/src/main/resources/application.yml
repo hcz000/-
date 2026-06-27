@@ -42,15 +42,7 @@ spring:
           max-idle: 8
           min-idle: 2
 
-  cloud:
-    nacos:
-      discovery:
-        enabled: false
-        server-addr: localhost:8848
-      config:
-        enabled: false
-        server-addr: localhost:8848
-        file-extension: yml
+  # Nacos 相关配置见 bootstrap.yml
 
 # Sa-Token：与 user-svc 共享同一份配置，token 校验通过 Redis 中共享的会话
 sa-token:

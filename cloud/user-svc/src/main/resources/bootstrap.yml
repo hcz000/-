@@ -1,0 +1,21 @@
+# Bootstrap 配置：在 application.yml 之前加载，主要用于 Nacos 注册和配置中心连接
+spring:
+  application:
+    name: user-svc
+  cloud:
+    nacos:
+      server-addr: ${NACOS_SERVER:localhost:8848}
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:nacos}
+      discovery:
+        enabled: true
+        namespace: ${NACOS_NAMESPACE:public}
+        group: DEFAULT_GROUP
+        # 永久实例 → CP 模式（如果想用 AP 把 ephemeral 改为 true）
+        ephemeral: true
+      config:
+        # 配置中心暂时禁用，等需要动态下发配置时再打开
+        enabled: false
+        namespace: ${NACOS_NAMESPACE:public}
+        group: DEFAULT_GROUP
+        file-extension: yml

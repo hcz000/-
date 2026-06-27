@@ -5,16 +5,7 @@ spring:
   application:
     name: api-gateway
   cloud:
-    nacos:
-      # Nacos 还没起来之前先关掉，避免启动失败
-      # 实际启用时改为 true 并填上 server-addr
-      discovery:
-        enabled: false
-        server-addr: localhost:8848
-      config:
-        enabled: false
-        server-addr: localhost:8848
-        file-extension: yml
+    # Nacos 相关配置见 bootstrap.yml
     gateway:
       discovery:
         locator:

@@ -60,16 +60,8 @@ spring:
           ssl:
             enable: true
 
-  # ===== Spring Cloud（Nacos 暂时关闭）=====
-  cloud:
-    nacos:
-      discovery:
-        enabled: false
-        server-addr: localhost:8848
-      config:
-        enabled: false
-        server-addr: localhost:8848
-        file-extension: yml
+  # ===== Spring Cloud =====
+  # Nacos 相关配置（server-addr / discovery / config）见 bootstrap.yml
 
 # ===== Sa-Token =====
 sa-token:
