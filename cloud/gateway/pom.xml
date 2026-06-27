@@ -15,6 +15,10 @@
     <name>gateway</name>
     <description>API 网关：统一入口 + sa-token 鉴权下沉 + Redis 限流</description>
 
+    <properties>
+        <sa-token.version>1.37.0</sa-token.version>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>Hu.ChaoZheng.demo</groupId>
@@ -51,6 +55,23 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis-reactive</artifactId>
+        </dependency>
+
+        <!-- Sa-Token Reactor 适配（WebFlux 环境下用 SaReactorFilter）-->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-reactor-spring-boot3-starter</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <!-- Sa-Token Redis 适配：与 user-svc / push-svc 共享同一份会话 -->
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-jackson</artifactId>
+            <version>${sa-token.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
         </dependency>
 
         <!-- Actuator -->

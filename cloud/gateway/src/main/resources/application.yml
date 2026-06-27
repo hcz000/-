@@ -4,6 +4,18 @@ server:
 spring:
   application:
     name: api-gateway
+
+  # ===== Redis（sa-token 会话共享 + 后续 RequestRateLimiter）=====
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      client-name: api-gateway
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+
   cloud:
     # Nacos 相关配置见 bootstrap.yml
     gateway:
@@ -11,25 +23,71 @@ spring:
         locator:
           enabled: false      # 不用自动路由，全部手动配
       routes:
-        # 占位路由示例：实际路由后续在 Nacos 配置中心动态下发
+        # ===== user-svc 路由 =====
+        # 登录接口单独路由 + 严格按 IP 限流（防爆破）
+        - id: user-login-route
+          uri: lb://user-svc
+          predicates:
+            - Path=/api/user/Login,/api/user/registered,/api/user/send
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: 1       # 每秒补充 1 个令牌
+                redis-rate-limiter.burstCapacity: 5       # 桶容量 5（最多瞬时 5 次）
+                redis-rate-limiter.requestedTokens: 1
+        # 其他 user-svc 接口正常限流
         - id: user-route
           uri: lb://user-svc
           predicates:
             - Path=/api/user/**
           filters:
             - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@userOrIpKeyResolver}"
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                redis-rate-limiter.requestedTokens: 1
+
+        # ===== post-svc 路由 =====
         - id: post-route
           uri: lb://post-svc
           predicates:
             - Path=/api/post/**
           filters:
             - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@userOrIpKeyResolver}"
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+
+        # ===== push-svc 路由（推送是读密集，配额开大一点）=====
         - id: push-route
           uri: lb://push-svc
           predicates:
             - Path=/api/push/**
           filters:
             - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@userOrIpKeyResolver}"
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+
+# ===== Sa-Token（必须和 user-svc / push-svc 保持完全一致才能共享会话）=====
+sa-token:
+  token-name: Authorization
+  timeout: 900
+  active-timeout: 900
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-read-cookie: false
+  is-read-header: true
+  is-write-header: true
 
 management:
   endpoints:

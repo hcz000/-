@@ -10,9 +10,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 用户控制器
@@ -94,5 +98,25 @@ public class UserController {
             return SaResult.error("用户不存在").setCode(404);
         }
         return SaResult.ok().setData(user);
+    }
+
+    /**
+     * 演示：展示当前请求里 sa-token 看到的 userId 和网关注入的 X-User-Id。
+     * <p>
+     * 在生产微服务架构里，鉴权下沉到网关后，下游服务可以选择：
+     * <ol>
+     *   <li>继续走 sa-token（依赖 Redis 共享会话）—— 当前默认方式</li>
+     *   <li>直接读 {@code X-User-Id} header（无状态、零 Redis 依赖）—— 更轻量</li>
+     * </ol>
+     * 二者并存，方便后续逐步切换。
+     */
+    @GetMapping("/whoami")
+    public SaResult whoami(@RequestHeader(value = "X-User-Id", required = false) String xUserId) {
+        Map<String, Object> info = new HashMap<>(4);
+        info.put("xUserId", xUserId);
+        info.put("saLoginId", StpUtil.isLogin() ? StpUtil.getLoginIdAsString() : null);
+        info.put("authSource", xUserId != null ? "gateway-header" : "direct-access");
+        info.put("note", "X-User-Id 由网关 HeaderEnrichGlobalFilter 注入；saLoginId 来自 sa-token + Redis 共享会话");
+        return SaResult.ok().setData(info);
     }
 }
