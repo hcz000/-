@@ -44,6 +44,24 @@ spring:
 
   # Nacos 相关配置见 bootstrap.yml
 
+  # ===== OpenFeign（调 user-svc 等下游服务）=====
+  cloud:
+    openfeign:
+      client:
+        config:
+          # 默认配置
+          default:
+            connect-timeout: 3000
+            read-timeout: 5000
+          # 调 user-svc 的专用配置（更严格的超时）
+          user-svc:
+            connect-timeout: 1000
+            read-timeout: 1000
+            logger-level: BASIC
+      # 把 Feign 包装进 CircuitBreaker（让 Feign 异常能触发 @CircuitBreaker）
+      circuitbreaker:
+        enabled: true
+
 # Sa-Token：与 user-svc 共享同一份配置，token 校验通过 Redis 中共享的会话
 sa-token:
   token-name: Authorization
@@ -60,6 +78,28 @@ sa-token:
 app:
   recommend:
     strategy: interestStrategy
+
+# ===== Resilience4j 熔断器 =====
+resilience4j:
+  circuitbreaker:
+    instances:
+      # 调 user-svc 的断路器（与 AuthorEnrichService 上 @CircuitBreaker(name=...) 对应）
+      user-svc-cb:
+        # 失败统计：基于请求数量的滑动窗口，最近 10 次调用统计
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        # 失败率阈值 50% → 开启断路器
+        failure-rate-threshold: 50
+        # 慢调用：响应 > 800ms 算慢，慢调用率超过 50% 也开启
+        slow-call-duration-threshold: 800ms
+        slow-call-rate-threshold: 50
+        # 开启状态持续 30s 后进入半开
+        wait-duration-in-open-state: 30s
+        # 半开状态允许 3 个探测请求
+        permitted-number-of-calls-in-half-open-state: 3
+        # 记录所有异常为失败（默认就是这样）
+        register-health-indicator: true
 
 management:
   endpoints:

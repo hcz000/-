@@ -22,6 +22,13 @@
             <artifactId>spring-web</artifactId>
         </dependency>
 
+        <!-- OpenFeign：定义 @FeignClient 接口需要这个注解
+             调用方拉 common 时会自动传递 -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
         <!-- Validation（DTO 校验）-->
         <dependency>
             <groupId>jakarta.validation</groupId>

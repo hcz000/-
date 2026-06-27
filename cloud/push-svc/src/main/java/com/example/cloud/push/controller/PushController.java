@@ -3,8 +3,10 @@ package com.example.cloud.push.controller;
 import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.util.SaResult;
 import com.example.cloud.push.entity.Postings;
+import com.example.cloud.push.service.AuthorEnrichService;
 import com.example.cloud.push.service.PushService;
 import com.example.cloud.push.service.SeenPostService;
+import com.example.cloud.push.vo.PostWithAuthorVO;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,12 +29,15 @@ public class PushController {
     @Resource
     private SeenPostService seenPostService;
 
+    @Resource
+    private AuthorEnrichService authorEnrichService;
+
     @GetMapping("/a")
     public SaResult push(@RequestParam(required = false) String excludeIds) {
         Set<Long> exclude = resolveExcludeIds(excludeIds);
         List<Postings> data = pushService.pushForCurrentUser(exclude);
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     @GetMapping("/interest")
@@ -40,7 +45,7 @@ public class PushController {
         Set<Long> exclude = resolveExcludeIds(excludeIds);
         List<Postings> data = pushService.likepush(exclude);
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     @GetMapping("/random")
@@ -48,7 +53,7 @@ public class PushController {
         Set<Long> exclude = resolveExcludeIds(excludeIds);
         List<Postings> data = pushService.push(exclude);
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     @GetMapping("/hot")
@@ -57,7 +62,7 @@ public class PushController {
         Set<Long> exclude = resolveExcludeIds(excludeIds);
         List<Postings> data = pushService.hotPush(size == null ? 10 : size, exclude);
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     @GetMapping("/planet")
@@ -71,7 +76,7 @@ public class PushController {
             data = pushService.planetPush(StpUtil.getLoginIdAsLong(), size == null ? 10 : size, exclude);
         }
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     @GetMapping("/friends")
@@ -85,13 +90,24 @@ public class PushController {
             data = pushService.friendPush(StpUtil.getLoginIdAsLong(), size == null ? 10 : size, exclude);
         }
         markSeenIfLogin(data);
-        return SaResult.ok().setData(data);
+        return SaResult.ok().setData(authorEnrichService.enrich(data));
     }
 
     /**
-     * 把前端传回的 excludeIds（逗号分隔）与服务端 seen 集合（24h 内已曝光）合并，
-     * 作为推送策略的统一排除集。未登录用户只取前端入参。
+     * 演示用：直接调用一次 Feign 看打通了没。
+     * 实际生产代码里这种探针接口应该挂在 actuator 下，这里图方便。
      */
+    @GetMapping("/_ping/user-svc")
+    public SaResult pingUserSvc(@RequestParam Long userId) {
+        List<Postings> fake = new ArrayList<>();
+        Postings p = new Postings();
+        p.setPostingsId(0L);
+        p.setUserId(userId);
+        fake.add(p);
+        List<PostWithAuthorVO> enriched = authorEnrichService.enrich(fake);
+        return SaResult.ok().setData(enriched.isEmpty() ? null : enriched.get(0).getAuthor());
+    }
+
     private Set<Long> resolveExcludeIds(String excludeIdsParam) {
         Set<Long> result = parseCsv(excludeIdsParam);
         if (StpUtil.isLogin()) {
@@ -120,9 +136,6 @@ public class PushController {
         return result;
     }
 
-    /**
-     * 本次推送的帖子写入用户曝光集合，下次刷新时自动跳过。未登录用户跳过。
-     */
     private void markSeenIfLogin(List<Postings> data) {
         if (data == null || data.isEmpty() || !StpUtil.isLogin()) {
             return;
