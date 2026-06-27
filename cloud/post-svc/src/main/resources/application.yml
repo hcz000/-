@@ -35,6 +35,16 @@ spring:
       port: 6379
       timeout: 5s
 
+  # ===== RabbitMQ（Outbox 投递目的地）=====
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME:root}
+    password: ${RABBITMQ_PASSWORD:123456}
+    # 生产端可靠性：开启 publisher confirm，让 RabbitTemplate 知道 broker 是否收到
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
   # Nacos 相关配置见 bootstrap.yml
 
 management:

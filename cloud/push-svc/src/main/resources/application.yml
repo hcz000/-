@@ -42,6 +42,22 @@ spring:
           max-idle: 8
           min-idle: 2
 
+  # ===== RabbitMQ（消费 post-svc 的 PostCreatedEvent）=====
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME:root}
+    password: ${RABBITMQ_PASSWORD:123456}
+    listener:
+      simple:
+        # 至少一次投递：业务异常 → nack，回队列
+        acknowledge-mode: auto
+        # 失败重试由消费端自带（spring-retry 默认 3 次），过载/毒消息建议配 DLX
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1s
+
   # Nacos 相关配置见 bootstrap.yml
 
   # ===== OpenFeign（调 user-svc 等下游服务）=====
