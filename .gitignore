@@ -39,6 +39,9 @@ logs/
 ### YAML files ###
 *.yml
 *.yaml
+# 微服务子项目的 application.yml 必须入库（不含敏感信息，密码走环境变量）
+!cloud/**/*.yml
+!cloud/**/*.yaml
 
 ### Node.js ###
 node_modules/

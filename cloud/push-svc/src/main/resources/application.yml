@@ -1,0 +1,80 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: push-svc
+
+  threads:
+    virtual:
+      enabled: true
+
+  # ===== MySQL（与单体共享同一个数据库，临时方案）=====
+  datasource:
+    url: jdbc:mysql://localhost:3306/knowledgeplanet?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      pool-name: PushSvcHikariPool
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  # ===== Redis =====
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 5s
+      client-name: push-svc
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+        server-addr: localhost:8848
+      config:
+        enabled: false
+        server-addr: localhost:8848
+        file-extension: yml
+
+# Sa-Token：与 user-svc 共享同一份配置，token 校验通过 Redis 中共享的会话
+sa-token:
+  token-name: Authorization
+  timeout: 900
+  active-timeout: 900
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-read-cookie: false
+  is-read-header: true
+  is-write-header: true
+
+# 当前激活的推荐策略（与单体保持一致）
+app:
+  recommend:
+    strategy: interestStrategy
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.example.cloud.push: DEBUG

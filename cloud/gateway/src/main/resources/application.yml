@@ -1,0 +1,51 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    nacos:
+      # Nacos 还没起来之前先关掉，避免启动失败
+      # 实际启用时改为 true 并填上 server-addr
+      discovery:
+        enabled: false
+        server-addr: localhost:8848
+      config:
+        enabled: false
+        server-addr: localhost:8848
+        file-extension: yml
+    gateway:
+      discovery:
+        locator:
+          enabled: false      # 不用自动路由，全部手动配
+      routes:
+        # 占位路由示例：实际路由后续在 Nacos 配置中心动态下发
+        - id: user-route
+          uri: lb://user-svc
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - StripPrefix=1
+        - id: post-route
+          uri: lb://post-svc
+          predicates:
+            - Path=/api/post/**
+          filters:
+            - StripPrefix=1
+        - id: push-route
+          uri: lb://push-svc
+          predicates:
+            - Path=/api/push/**
+          filters:
+            - StripPrefix=1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO

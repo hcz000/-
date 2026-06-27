@@ -1,0 +1,94 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: user-svc
+
+  threads:
+    virtual:
+      enabled: true
+
+  # ===== MySQL =====
+  datasource:
+    url: jdbc:mysql://localhost:3306/knowledgeplanet?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 5000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: UserSvcHikariPool
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+  # ===== Redis =====
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 5s
+      client-name: user-svc
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  # ===== Mail（注册验证码）=====
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:zilvdexiaozheng@qq.com}
+    password: ${MAIL_PASSWORD:placeholder}
+    protocol: smtps
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+
+  # ===== Spring Cloud（Nacos 暂时关闭）=====
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+        server-addr: localhost:8848
+      config:
+        enabled: false
+        server-addr: localhost:8848
+        file-extension: yml
+
+# ===== Sa-Token =====
+sa-token:
+  token-name: Authorization
+  timeout: 900
+  active-timeout: 900
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-read-cookie: false
+  is-read-header: true
+  is-write-header: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.example.cloud.user: DEBUG
