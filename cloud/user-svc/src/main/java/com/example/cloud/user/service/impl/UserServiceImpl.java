@@ -197,4 +197,17 @@ public class UserServiceImpl implements IUserService {
     public User getById(Long id) {
         return userRepository.findById(id).orElse(null);
     }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean softDelete(Long userId) {
+        if (userId == null) return false;
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null) return false;
+        if (Boolean.TRUE.equals(user.getDeleted())) return false;
+        user.setDeleted(true);
+        userRepository.save(user);
+        log.info("[user] soft delete userId={}", userId);
+        return true;
+    }
 }

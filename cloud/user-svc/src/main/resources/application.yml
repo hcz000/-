@@ -81,6 +81,29 @@ management:
       exposure:
         include: health,info,metrics
 
+# ===== Seata 客户端 =====
+# Seata server 是 file 模式（不走 Nacos），直接配 TC 地址
+seata:
+  enabled: true
+  application-id: ${spring.application.name}
+  tx-service-group: default_tx_group
+  service:
+    vgroup-mapping:
+      default_tx_group: default
+    grouplist:
+      default: 127.0.0.1:8091
+    disable-global-transaction: false
+  registry:
+    type: file
+  config:
+    type: file
+  client:
+    rm:
+      report-success-enable: false
+    tm:
+      default-global-transaction-timeout: 60000
+  data-source-proxy-mode: AT
+
 logging:
   level:
     com.example.cloud.user: DEBUG
