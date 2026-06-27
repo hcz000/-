@@ -3,6 +3,7 @@ package com.example.demo.service.Impl;
 import com.aliyun.oss.ClientBuilderConfiguration;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
+import com.aliyun.oss.model.AbortMultipartUploadRequest;
 import com.aliyun.oss.model.CompleteMultipartUploadRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadResult;
@@ -113,13 +114,13 @@ public class OssServiceImpl implements IOssService {
         }
     }
 
-    @Override
     public String uploadLargeFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new BusinessException("上传文件不能为空");
         }
-        
+
         String objectName = buildObjectName(file.getOriginalFilename());
+        String uploadId = null;
 
         try {
             InitiateMultipartUploadRequest initRequest = new InitiateMultipartUploadRequest(
@@ -131,7 +132,7 @@ public class OssServiceImpl implements IOssService {
             }
 
             InitiateMultipartUploadResult initResult = ossClient.initiateMultipartUpload(initRequest);
-            String uploadId = initResult.getUploadId();
+            uploadId = initResult.getUploadId();
 
             long fileSize = file.getSize();
             int partCount = (int) (fileSize / PART_SIZE);
@@ -139,7 +140,7 @@ public class OssServiceImpl implements IOssService {
                 partCount++;
             }
 
-            log.info("开始分片上传,文件名: {}, 大小: {}MB, 分片数: {}", 
+            log.info("开始分片上传,文件名: {}, 大小: {}MB, 分片数: {}",
                     file.getOriginalFilename(), fileSize / 1024 / 1024, partCount);
 
             List<PartETag> partETags = uploadPartsParallel(
@@ -153,6 +154,18 @@ public class OssServiceImpl implements IOssService {
             return buildFileUrl(objectName);
         } catch (Exception e) {
             log.error("分片上传失败: {}", file.getOriginalFilename(), e);
+            // 显式 abort 已传分片，避免孤儿分片占用 OSS 存储
+            // （另外建议桶层面配 N 天生命周期规则做兜底，防 abort 本身失败）
+            if (uploadId != null) {
+                try {
+                    ossClient.abortMultipartUpload(new AbortMultipartUploadRequest(
+                            ossProperties.getBucketName(), objectName, uploadId));
+                    log.info("已 abort 残留分片, objectName={}, uploadId={}", objectName, uploadId);
+                } catch (Exception abortEx) {
+                    log.warn("abort 残留分片失败, objectName={}, uploadId={}，将由桶生命周期规则兜底清理",
+                            objectName, uploadId, abortEx);
+                }
+            }
             throw new BusinessException("分片上传失败", e);
         }
     }

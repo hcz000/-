@@ -22,7 +22,7 @@ public class JsonbListStringConverter implements AttributeConverter<List<String>
         try {
             return objectMapper.writeValueAsString(attribute);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Error converting list to JSON", e);
+            throw new IllegalArgumentException("将列表转换为 JSON 时出错", e);
         }
     }
 
@@ -37,7 +37,7 @@ public class JsonbListStringConverter implements AttributeConverter<List<String>
             }
             return objectMapper.readValue(dbData, new TypeReference<List<String>>() {});
         } catch (IOException e) {
-            throw new IllegalArgumentException("Error converting JSON to list", e);
+            throw new IllegalArgumentException("将列表转换为 JSON 时出错", e);
         }
     }
 }

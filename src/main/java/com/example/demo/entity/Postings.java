@@ -1,14 +1,19 @@
 package com.example.demo.entity;
 
 import com.example.demo.util.SnowflakeIdGenerator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import lombok.experimental.Accessors;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -96,4 +101,21 @@ public class Postings implements Serializable {
 
     @Column(name = "user_id")
     private Long userId;
+
+    // ---- JPA 关联：只读、懒加载、对 JSON 不可见。仅供 @EntityGraph 在列表查询中 JOIN 使用。
+    // 注意：被 @Cacheable(CACHE_POSTINGS) 缓存的实体，author/planet 是未初始化代理，
+    // 缓存命中后访问会抛 LazyInitializationException（open-in-view=false）。
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", insertable = false, updatable = false)
+    private User author;
+
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "planet_id", insertable = false, updatable = false)
+    private Planet planet;
 }

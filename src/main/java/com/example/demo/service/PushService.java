@@ -3,7 +3,6 @@ package com.example.demo.service;
 import cn.dev33.satoken.stp.StpUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.example.demo.entity.FriendRelation;
 import com.example.demo.entity.Postings;
 import com.example.demo.repository.FriendRelationRepository;
 import com.example.demo.repository.PlanetMemberRepository;
@@ -15,27 +14,28 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * 推荐协调服务
- * 负责认证校验、缓存、超时降级等编排逻辑，核心算法委托给 {@link RecommendStrategy}
+ * 负责认证校验、超时降级等编排逻辑，核心算法委托给 {@link RecommendStrategy}
+ * <p>
+ * 「已曝光去重」由 {@link SeenPostService} + 调用方传入的 {@code excludeIds} 共同完成，
+ * Controller 负责拼接最终排除集，并在结果返回后调用 {@code markSeen} 记录。
  */
 @Slf4j
 @Service
 public class PushService {
 
-    private static final String USER_PUSH_KEY_PREFIX = "push:user:";
-    private static final long USER_PUSH_CACHE_SECONDS = 30;
     private static final int TOTAL_PUSH_COUNT = 10;
     private static final int PUSH_TIMEOUT_MS = 250;
+    /** 确定性查询（hot/planet/friend）的内存过滤超采系数 */
+    private static final int OVERSAMPLE_FACTOR = 3;
 
     @Resource
     private PostingsRepository postingsRepository;
@@ -55,9 +55,6 @@ public class PushService {
     private static final String DETAIL_KEY_PREFIX = "push:detail:";
     private static final long DETAIL_TTL_DAYS = 7;
     private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    @Resource
-    private RedisTemplate<String, Object> redisTemplate;
 
     @Resource
     private UserVectorService userVectorService;
@@ -88,31 +85,25 @@ public class PushService {
     /**
      * 随机推送（兜底策略）
      */
-    public List<Postings> push() {
-        StrategyResult result = randomStrategy.recommend(null, TOTAL_PUSH_COUNT);
+    public List<Postings> push(Set<Long> excludeIds) {
+        Set<Long> exclude = nonNull(excludeIds);
+        StrategyResult result = randomStrategy.recommend(null, TOTAL_PUSH_COUNT, exclude);
         return materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT, "push.random");
     }
 
     /**
      * 首页智能推送：根据登录状态和用户向量稳定性选择策略
      */
-    public List<Postings> pushForCurrentUser() {
+    public List<Postings> pushForCurrentUser(Set<Long> excludeIds) {
         if (!StpUtil.isLogin()) {
-            return push();
+            return push(excludeIds);
         }
         Long userId = StpUtil.getLoginIdAsLong();
         if (!userVectorService.isStableStage(userId)) {
-            return push();
+            return push(excludeIds);
         }
 
-        // 检查用户缓存
-        String userPushCacheKey = USER_PUSH_KEY_PREFIX + userId;
-        List<Postings> cached = getUserPushFromCache(userPushCacheKey);
-        if (!cached.isEmpty()) {
-            log.debug("[push.a] cache hit userId={}, size={}", userId, cached.size());
-            return cached;
-        }
-
+        Set<Long> exclude = nonNull(excludeIds);
         long startNs = System.nanoTime();
         try {
             Long currentUserId = userId;
@@ -121,14 +112,14 @@ public class PushService {
             // 并行启动两个策略（只返回 ID，不查数据库）：兴趣优先，随机兜底补全
             CompletableFuture<List<Long>> interestIdsFuture = CompletableFuture
                     .supplyAsync(() -> {
-                        StrategyResult result = active.recommend(currentUserId, TOTAL_PUSH_COUNT);
+                        StrategyResult result = active.recommend(currentUserId, TOTAL_PUSH_COUNT, exclude);
                         log.debug("[push.a] interest strategy done, ids={}", result.postIds().size());
                         return result.postIds();
                     }, virtualThreadExecutor);
 
             CompletableFuture<List<Long>> randomIdsFuture = CompletableFuture
                     .supplyAsync(() -> {
-                        StrategyResult result = randomStrategy.recommend(currentUserId, TOTAL_PUSH_COUNT);
+                        StrategyResult result = randomStrategy.recommend(currentUserId, TOTAL_PUSH_COUNT, exclude);
                         log.debug("[push.a] random strategy done, ids={}", result.postIds().size());
                         return result.postIds();
                     }, virtualThreadExecutor);
@@ -143,91 +134,92 @@ public class PushService {
                         userId, active.getName(), e.toString());
             }
 
-            // 合并 ID：兴趣优先，随机补全
-            List<Long> hotIds = hotRankService.topIds(TOTAL_PUSH_COUNT);
-            List<Long> mergedIds = mergeIds(interestIds, hotIds, randomIdsFuture, TOTAL_PUSH_COUNT);
+            // 合并 ID：兴趣优先，热门补全，随机兜底
+            List<Long> hotIds = hotRankService.topIds(TOTAL_PUSH_COUNT * OVERSAMPLE_FACTOR);
+            List<Long> mergedIds = mergeIds(interestIds, hotIds, randomIdsFuture, TOTAL_PUSH_COUNT, exclude);
 
-            // 统一查一次数据库，获取帖子详情
             List<Postings> result = materializeByOrderedIds(mergedIds, TOTAL_PUSH_COUNT,
                     "push.a:" + active.getName());
 
-            cacheUserPush(userPushCacheKey, result);
-            log.info("[push.a] done userId={}, strategy={}, cost={}ms, interestSize={}, finalSize={}",
-                    userId, active.getName(), elapsedMs(startNs), interestIds.size(), result.size());
+            log.info("[push.a] done userId={}, strategy={}, cost={}ms, interestSize={}, finalSize={}, exclude={}",
+                    userId, active.getName(), elapsedMs(startNs), interestIds.size(), result.size(), exclude.size());
             return result;
         } catch (Exception e) {
             log.warn("[push.a] unexpected error userId={}, fallback=random", userId, e);
-            return push();
+            return push(exclude);
         }
     }
 
     /**
      * 按兴趣推送（内部使用，供 Controller 暴露）
      */
-    public List<Postings> likepush() {
+    public List<Postings> likepush(Set<Long> excludeIds) {
         if (!StpUtil.isLogin()) {
-            return push();
+            return push(excludeIds);
         }
-        return interestPushForUser(StpUtil.getLoginIdAsLong());
+        return interestPushForUser(StpUtil.getLoginIdAsLong(), nonNull(excludeIds));
     }
 
     /**
      * 按指定用户的兴趣模型生成推荐，只供当前服务内部复用。
      */
-    private List<Postings> interestPushForUser(Long userId) {
+    private List<Postings> interestPushForUser(Long userId, Set<Long> exclude) {
         if (userId == null) {
-            return push();
+            return push(exclude);
         }
         long startNs = System.nanoTime();
-        StrategyResult result = interestStrategy.recommend(userId, TOTAL_PUSH_COUNT);
+        StrategyResult result = interestStrategy.recommend(userId, TOTAL_PUSH_COUNT, exclude);
         List<Postings> posts = materializeByOrderedIds(result.postIds(), TOTAL_PUSH_COUNT, "push.a:interest");
-        log.info("[push.a:interest] userId={}, strategy={}, cost={}ms, finalSize={}",
-                userId, result.strategyName(), elapsedMs(startNs), posts.size());
+        log.info("[push.a:interest] userId={}, strategy={}, cost={}ms, finalSize={}, exclude={}",
+                userId, result.strategyName(), elapsedMs(startNs), posts.size(), exclude.size());
         return posts;
     }
 
-    // ===== 策略选择 =====
-
-    /**
-     * 根据配置获取当前激活的推荐策略
-     */
-    public List<Postings> hotPush(int count) {
+    public List<Postings> hotPush(int count, Set<Long> excludeIds) {
         int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
-        List<Long> ids = hotRankService.topIds(limit);
+        Set<Long> exclude = nonNull(excludeIds);
+        // 从 hot zset 超采，再过滤已曝光
+        List<Long> ids = hotRankService.topIds(limit * OVERSAMPLE_FACTOR);
         if (ids.isEmpty()) {
             hotRankService.rebuildRecent(500);
-            ids = hotRankService.topIds(limit);
+            ids = hotRankService.topIds(limit * OVERSAMPLE_FACTOR);
         }
-        return materializeByOrderedIds(ids, limit, "push.hot");
+        List<Long> filtered = filterAndTake(ids, exclude, limit);
+        return materializeByOrderedIds(filtered, limit, "push.hot");
     }
 
-    public List<Postings> planetPush(Long userId, int count) {
+    public List<Postings> planetPush(Long userId, int count, Set<Long> excludeIds) {
         if (userId == null) {
-            return push();
+            return push(excludeIds);
         }
         int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
+        Set<Long> exclude = nonNull(excludeIds);
         List<Long> planetIds = planetMemberRepository.findPlanetIdsByUserId(userId);
         if (planetIds == null || planetIds.isEmpty()) {
-            return push();
+            return push(exclude);
         }
-        List<Long> ids = postingsRepository.findRecentLiveIdsByPlanetIds(planetIds, limit);
-        return materializeByOrderedIds(ids, limit, "push.planet");
+        // 超采 + 内存过滤已曝光，候选池有限时可能返回 < limit 或空
+        List<Long> ids = postingsRepository.findRecentLiveIdsByPlanetIds(planetIds, limit * OVERSAMPLE_FACTOR);
+        List<Long> filtered = filterAndTake(ids, exclude, limit);
+        return materializeByOrderedIds(filtered, limit, "push.planet");
     }
 
-    public List<Postings> friendPush(Long userId, int count) {
+    public List<Postings> friendPush(Long userId, int count, Set<Long> excludeIds) {
         if (userId == null) {
-            return push();
+            return push(excludeIds);
         }
         int limit = count <= 0 ? TOTAL_PUSH_COUNT : count;
+        Set<Long> exclude = nonNull(excludeIds);
         List<Long> friendIds = friendRelationRepository.findByUserIdInRelation(userId).stream()
                 .map(relation -> relation.getUserAId().equals(userId) ? relation.getUserBId() : relation.getUserAId())
                 .filter(Objects::nonNull)
                 .toList();
         if (friendIds.isEmpty()) {
-            return push();
+            return push(exclude);
         }
-        List<Long> ids = postingsRepository.findRecentLiveIdsByUserIds(friendIds, limit);
-        return materializeByOrderedIds(ids, limit, "push.friend");
+        List<Long> ids = postingsRepository.findRecentLiveIdsByUserIds(friendIds, limit * OVERSAMPLE_FACTOR);
+        List<Long> filtered = filterAndTake(ids, exclude, limit);
+        return materializeByOrderedIds(filtered, limit, "push.friend");
     }
 
     private RecommendStrategy getActiveStrategy() {
@@ -243,58 +235,55 @@ public class PushService {
     // ===== 结果合并 =====
 
     /**
-     * 合并 ID 列表：兴趣优先，随机补全
-     * <p>
-     * 如果兴趣 ID 不足 maxCount，从随机结果中取不重复的 ID 补齐
+     * 合并 ID 列表：兴趣优先，热门补全，随机兜底，统一排除已曝光
      */
     private List<Long> mergeIds(List<Long> interestIds,
                                 List<Long> hotIds,
                                 CompletableFuture<List<Long>> randomIdsFuture,
-                                int maxCount) {
-        // 兴趣结果够用 → 直接去重返回
-        if (interestIds.size() >= maxCount) {
-            return dedupLimit(interestIds, maxCount);
-        }
+                                int maxCount,
+                                Set<Long> excludeIds) {
+        Set<Long> seenIds = new HashSet<>();
+        List<Long> merged = new ArrayList<>(maxCount);
 
-        // 等随机结果（此时大概率已经完成了）
+        appendUnique(interestIds, excludeIds, seenIds, merged, maxCount);
+        if (merged.size() >= maxCount) return merged;
+
+        appendUnique(hotIds, excludeIds, seenIds, merged, maxCount);
+        if (merged.size() >= maxCount) return merged;
+
         List<Long> randomIds;
         try {
             randomIds = randomIdsFuture.join();
         } catch (Exception e) {
             log.warn("[push.a] random strategy also failed", e);
-            return dedupLimit(interestIds, maxCount);
+            return merged;
         }
-
-        // 去重合并：兴趣优先，随机补全
-        Set<Long> seenIds = new HashSet<>();
-        List<Long> merged = new ArrayList<>(maxCount);
-        for (Long id : interestIds) {
-            if (id != null && seenIds.add(id)) {
-                merged.add(id);
-            }
-        }
-        if (hotIds != null) {
-            for (Long id : hotIds) {
-                if (merged.size() >= maxCount) break;
-                if (id != null && seenIds.add(id)) {
-                    merged.add(id);
-                }
-            }
-        }
-        for (Long id : randomIds) {
-            if (merged.size() >= maxCount) break;
-            if (id != null && seenIds.add(id)) {
-                merged.add(id);
-            }
-        }
+        appendUnique(randomIds, excludeIds, seenIds, merged, maxCount);
         return merged;
     }
 
-    private List<Long> dedupLimit(List<Long> ids, int maxCount) {
-        Set<Long> seen = new HashSet<>();
-        List<Long> result = new ArrayList<>(maxCount);
+    private void appendUnique(List<Long> source, Set<Long> excludeIds,
+                              Set<Long> seenIds, List<Long> merged, int maxCount) {
+        if (source == null) return;
+        for (Long id : source) {
+            if (merged.size() >= maxCount) return;
+            if (id == null || excludeIds.contains(id)) continue;
+            if (seenIds.add(id)) {
+                merged.add(id);
+            }
+        }
+    }
+
+    /**
+     * 对超采得到的 id 列表做「排除 + 去重 + 截断」，用于 hot/planet/friend 这类确定性查询。
+     */
+    private List<Long> filterAndTake(List<Long> ids, Set<Long> excludeIds, int maxCount) {
+        if (ids == null || ids.isEmpty()) return Collections.emptyList();
+        List<Long> result = new ArrayList<>(Math.min(ids.size(), maxCount));
+        Set<Long> seen = new HashSet<>(ids.size());
         for (Long id : ids) {
-            if (id != null && seen.add(id)) {
+            if (id == null || excludeIds.contains(id)) continue;
+            if (seen.add(id)) {
                 result.add(id);
                 if (result.size() >= maxCount) break;
             }
@@ -302,17 +291,14 @@ public class PushService {
         return result;
     }
 
+    private Set<Long> nonNull(Set<Long> in) {
+        return in == null ? Collections.emptySet() : in;
+    }
+
     // ===== 通用工具方法 =====
 
     private long elapsedMs(long startNs) {
         return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
-    }
-
-    private List<Postings> loadPostsByIdsTimed(List<Long> idList, String sourceKey) {
-        long startNs = System.nanoTime();
-        List<Postings> posts = postingsRepository.findAllById(idList);
-        log.debug("[push] loadByIds source={}, size={}, cost={}ms", sourceKey, idList.size(), elapsedMs(startNs));
-        return posts;
     }
 
     private List<Postings> materializeByOrderedIds(List<Long> orderedIds, int maxCount, String sourceKey) {
@@ -422,35 +408,5 @@ public class PushService {
         } catch (JsonProcessingException e) {
             log.warn("[push] cache post detail failed, postId={}", post.getPostingsId(), e);
         }
-    }
-
-    private List<Postings> getUserPushFromCache(String userPushCacheKey) {
-        Object obj = redisTemplate.opsForValue().get(userPushCacheKey);
-        if (!(obj instanceof String cachedCsv) || cachedCsv.isBlank()) {
-            return Collections.emptyList();
-        }
-        List<Long> ids = Arrays.stream(cachedCsv.split(","))
-                .filter(s -> !s.isBlank())
-                .map(Long::parseLong)
-                .toList();
-        if (ids.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return loadPostsByIdsTimed(ids, userPushCacheKey);
-    }
-
-    private void cacheUserPush(String userPushCacheKey, List<Postings> posts) {
-        if (posts == null || posts.isEmpty()) {
-            return;
-        }
-        String ids = posts.stream()
-                .map(Postings::getPostingsId)
-                .filter(Objects::nonNull)
-                .map(String::valueOf)
-                .collect(Collectors.joining(","));
-        if (ids.isBlank()) {
-            return;
-        }
-        redisTemplate.opsForValue().set(userPushCacheKey, ids, USER_PUSH_CACHE_SECONDS, TimeUnit.SECONDS);
     }
 }

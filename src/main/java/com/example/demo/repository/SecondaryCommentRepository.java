@@ -1,6 +1,10 @@
 package com.example.demo.repository;
 
 import com.example.demo.entity.SecondaryComment;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -12,6 +16,11 @@ import java.util.List;
 
 @Repository
 public interface SecondaryCommentRepository extends JpaRepository<SecondaryComment, Long>, JpaSpecificationExecutor<SecondaryComment> {
+
+    // 列表查询时一次拉取评论作者，避免按 user_id 逐条触发 N+1。
+    @Override
+    @EntityGraph(attributePaths = {"author"})
+    Page<SecondaryComment> findAll(Specification<SecondaryComment> spec, Pageable pageable);
 
     /**
      * 增量更新点赞数

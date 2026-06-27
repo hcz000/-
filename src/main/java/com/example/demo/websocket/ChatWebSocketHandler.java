@@ -44,6 +44,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final Map<String, Set<WebSocketSession>> sessions = new ConcurrentHashMap<>();
     private final Map<String, WebSocketSession> sessionIndex = new ConcurrentHashMap<>();
 
+    // 连接成功
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String userKey = userKey(session);
@@ -57,6 +58,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         send(safeSession, infoResponse("连接成功"));
     }
 
+    // 接收到消息
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
         Long userId = userId(session);
@@ -67,16 +69,19 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         virtualThreadExecutor.execute(() -> handleIncomingMessage(session, message, userId));
     }
 
+    // 连接关闭
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         removeSession(session);
     }
 
+    // 错误处理
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         removeSession(session);
     }
 
+    // 广播通知
     public void broadcastNotification(Long userId, NotificationResponse response) {
         if (userId == null) {
             return;
@@ -84,6 +89,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         virtualThreadExecutor.execute(() -> broadcast(String.valueOf(userId), notificationResponse(response)));
     }
 
+    // 处理接收到的消息
     private void handleIncomingMessage(WebSocketSession session, TextMessage message, Long userId) {
         WebSocketSession managedSession = managedSession(session);
         try {
@@ -101,6 +107,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 广播消息
     private void broadcast(String userId, Map<String, Object> response) {
         if (!StringUtils.hasText(userId)) {
             return;
@@ -115,10 +122,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 发送消息
     private void send(WebSocketSession session, Map<String, Object> response) {
         send(session, toText(response));
     }
 
+    // 发送消息
     private void send(WebSocketSession session, TextMessage message) {
         if (session == null || !session.isOpen()) {
             return;
@@ -129,6 +138,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 移除会话
     private void removeSession(WebSocketSession session) {
         String userKey = userKey(session);
         if (!StringUtils.hasText(userKey)) {
@@ -148,6 +158,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 获取用户ID
     private Long userId(WebSocketSession session) {
         String key = userKey(session);
         if (!StringUtils.hasText(key)) {
@@ -160,11 +171,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 获取用户Key
     private String userKey(WebSocketSession session) {
         Object value = session.getAttributes().get(SaTokenHandshakeInterceptor.USER_ID_ATTR);
         return value == null ? null : value.toString();
     }
 
+    // 获取安全会话
     private WebSocketSession safeSession(WebSocketSession session) {
         if (session instanceof ConcurrentWebSocketSessionDecorator) {
             return session;
@@ -175,10 +188,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 WS_SEND_BUFFER_LIMIT_BYTES);
     }
 
+    // 获取管理会话
     private WebSocketSession managedSession(WebSocketSession session) {
         return sessionIndex.getOrDefault(session.getId(), session);
     }
 
+    // 转为文本消息
     private TextMessage toText(Map<String, Object> response) {
         try {
             return new TextMessage(objectMapper.writeValueAsString(response));
@@ -187,22 +202,27 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    // 转为聊天消息
     private Map<String, Object> chatResponse(ChatMessageResponse response) {
         return wsResponse("CHAT", response);
     }
 
+    // 转为错误消息
     private Map<String, Object> errorResponse(String message) {
         return wsResponse("ERROR", message);
     }
 
+    // 转为提示消息
     private Map<String, Object> infoResponse(String message) {
         return wsResponse("INFO", message);
     }
 
+    // 转为通知消息
     private Map<String, Object> notificationResponse(NotificationResponse response) {
         return wsResponse("NOTIFICATION", response);
     }
 
+    // 转为 WS 消息
     private Map<String, Object> wsResponse(String type, Object data) {
         Map<String, Object> payload = new ConcurrentHashMap<>();
         payload.put("type", type);

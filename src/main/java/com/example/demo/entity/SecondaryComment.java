@@ -1,14 +1,19 @@
 package com.example.demo.entity;
 
 import com.example.demo.util.SnowflakeIdGenerator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import lombok.experimental.Accessors;
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -79,4 +84,19 @@ public class SecondaryComment implements Serializable {
 
     @Column(name = "deleted")
     private Boolean deleted;
+
+    // ---- JPA 关联：只读、懒加载、对 JSON 不可见。仅供 @EntityGraph 使用。
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", insertable = false, updatable = false)
+    private User author;
+
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "primary_comment_id", insertable = false, updatable = false)
+    private PrimaryComment primaryComment;
 }

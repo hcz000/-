@@ -1,6 +1,10 @@
 package com.example.demo.repository;
 
 import com.example.demo.entity.Postings;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -13,6 +17,15 @@ import java.util.List;
 
 @Repository
 public interface PostingsRepository extends JpaRepository<Postings, Long>, JpaSpecificationExecutor<Postings> {
+
+    // 列表查询时通过 LEFT JOIN 一次性拉取作者与所属星球，避免后续访问 author/planet 触发 N+1。
+    @Override
+    @EntityGraph(attributePaths = {"author", "planet"})
+    Page<Postings> findAll(Specification<Postings> spec, Pageable pageable);
+
+    @Override
+    @EntityGraph(attributePaths = {"author", "planet"})
+    List<Postings> findAllById(Iterable<Long> ids);
 
     @Modifying
     @Query(value = "UPDATE postings SET like_count = like_count + :delta WHERE postings_id = :id AND deleted = false", nativeQuery = true)

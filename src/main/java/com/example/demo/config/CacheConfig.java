@@ -97,24 +97,25 @@ public class CacheConfig {
                         .recordStats()
                         .build());
     
-        // 用户邮箱查询缓存: 3分钟过期,最大50000条
+        // 用户邮箱查询缓存: 5分钟过期,最大50000条
         // 优化: 短期缓存,避免重复查询数据库
         cacheManager.registerCustomCache(CACHE_USER_BY_EMAIL,
                 Caffeine.newBuilder()
-                        .expireAfterWrite(Duration.ofMinutes(3))
+                        .expireAfterWrite(Duration.ofMinutes(5))
                         .maximumSize(50000)
                         .recordStats()
                         .build());
     
-        // 我的举报缓存: 1分钟过期,最大20000条
+        // 我的举报缓存: 5分钟过期,最大20000条
         // 优化: 短期缓存,数据变化频繁
         cacheManager.registerCustomCache(CACHE_MY_REPORTS,
                 Caffeine.newBuilder()
-                        .expireAfterWrite(Duration.ofMinutes(1))
+                        .expireAfterWrite(Duration.ofMinutes(5))
                         .maximumSize(20000)
                         .recordStats()
                         .build());
 
+        // 用户兴趣比缓存: 2分钟过期,最大50000条
         cacheManager.registerCustomCache(CACHE_USER_INTEREST_RATIOS,
                 Caffeine.newBuilder()
                         .expireAfterWrite(Duration.ofMinutes(2))
@@ -122,6 +123,7 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // 系统配置缓存: 5分钟过期,最大1000条
         cacheManager.registerCustomCache(CACHE_SYSTEM_CONFIG,
                 Caffeine.newBuilder()
                         .expireAfterWrite(Duration.ofMinutes(5))
@@ -129,9 +131,10 @@ public class CacheConfig {
                         .recordStats()
                         .build());
 
+        // 热帖缓存: 30秒过期,最大2000条
         cacheManager.registerCustomCache(CACHE_HOT_POSTS,
                 Caffeine.newBuilder()
-                        .expireAfterWrite(Duration.ofSeconds(30))
+                        .expireAfterWrite(Duration.ofMinutes(5))
                         .maximumSize(2000)
                         .recordStats()
                         .build());
@@ -145,11 +148,11 @@ public class CacheConfig {
                         .recordStats()
                         .build());
         
-        // 用户ID查询缓存: 10分钟过期,最大50000条
+        // 用户ID查询缓存: 5分钟过期,最大50000条
         // 优化: 补充email缓存,避免重复查询
         cacheManager.registerCustomCache(CACHE_USER_BY_ID,
                 Caffeine.newBuilder()
-                        .expireAfterWrite(Duration.ofMinutes(10))
+                        .expireAfterWrite(Duration.ofMinutes(5))
                         .maximumSize(50000)
                         .recordStats()
                         .build());
@@ -163,11 +166,11 @@ public class CacheConfig {
                         .recordStats()
                         .build());
         
-        // 用户星球成员关系缓存: 10分钟过期,最大50000条
+        // 用户星球成员关系缓存: 5分钟过期,最大50000条
         // 优化: 频繁检查,减少数据库查询
         cacheManager.registerCustomCache(CACHE_PLANET_MEMBER,
                 Caffeine.newBuilder()
-                        .expireAfterWrite(Duration.ofMinutes(10))
+                        .expireAfterWrite(Duration.ofMinutes(5))
                         .maximumSize(50000)
                         .recordStats()
                         .build());

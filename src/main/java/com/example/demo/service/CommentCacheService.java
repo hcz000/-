@@ -3,6 +3,7 @@ package com.example.demo.service;
 import com.example.demo.entity.PrimaryComment;
 import com.example.demo.entity.SecondaryComment;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,7 +22,9 @@ public class CommentCacheService {
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    // 关闭 FAIL_ON_UNKNOWN_PROPERTIES：实体新增字段（如 JPA 关联）后，旧 Redis JSON 仍可反序列化。
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public PrimaryComment getPrimaryComment(Long id, Supplier<PrimaryComment> loader) {
         return get(PRIMARY_PREFIX + id, PrimaryComment.class, loader);

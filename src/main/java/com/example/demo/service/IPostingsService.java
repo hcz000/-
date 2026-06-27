@@ -11,6 +11,12 @@ public interface IPostingsService {
 
     Postings createPost(Postings postings);
 
+    /**
+     * 注意：返回的 Postings 来自 @Cacheable(CACHE_POSTINGS) 本地缓存，
+     * 其 author / planet 关联字段是未初始化的懒代理。由于 open-in-view=false，
+     * 控制器层访问 post.getAuthor() 会抛 LazyInitializationException。
+     * 如需访问关联，请改造此方法用 @EntityGraph 一并加载，并清理已有缓存。
+     */
     Postings getPost(Long postingsId);
 
     Postings updatePost(Postings postings);
