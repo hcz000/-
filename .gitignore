@@ -44,4 +44,8 @@ logs/
 node_modules/
 nul
 
+### Personal / local notes ###
+简历.md
+*.local.md
+
 
