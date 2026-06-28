@@ -5,6 +5,7 @@ import com.example.cloud.push.config.RabbitMQConfig;
 import com.example.cloud.push.entity.Postings;
 import com.example.cloud.push.repository.PostingsRepository;
 import com.example.cloud.push.service.CandidatePoolService;
+import com.example.cloud.push.service.HotRankService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -45,6 +46,9 @@ public class PostEventConsumer {
     @Resource
     private CandidatePoolService candidatePoolService;
 
+    @Resource
+    private HotRankService hotRankService;
+
     @RabbitListener(queues = RabbitMQConfig.PUSH_POST_CREATED_QUEUE)
     public void onPostCreated(PostCreatedEvent event) {
         if (event == null || event.getEventId() == null || event.getPostId() == null) {
@@ -69,8 +73,9 @@ public class PostEventConsumer {
             return;
         }
 
-        // 3. 加入候选池（daily / weekly / type）
+        // 3. 加入候选池（daily / weekly / type）+ 维护热度榜
         candidatePoolService.addToPools(post);
+        hotRankService.refreshPost(post);
         log.info("[push-mq] consumed eventId={}, postId={}, type={}",
                 event.getEventId(), event.getPostId(), event.getType());
     }

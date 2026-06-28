@@ -109,6 +109,10 @@ sa-token:
 app:
   recommend:
     strategy: interestStrategy
+  hot:
+    like-weight: 3.0
+    reply-weight: 5.0
+    half-life-hours: 24.0
 
 # ===== Resilience4j 熔断器 =====
 resilience4j:
