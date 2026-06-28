@@ -1,0 +1,57 @@
+package com.example.cloud.user.entity;
+
+import com.example.cloud.common.util.SnowflakeIdGenerator;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.experimental.Accessors;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+
+@Data
+@EqualsAndHashCode(callSuper = false)
+@Accessors(chain = true)
+@Entity
+@Table(name = "friend_relation")
+public class FriendRelation implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    @Id
+    @Column(name = "id", columnDefinition = "BIGINT")
+    private Long id;
+
+    @PrePersist
+    public void generateId() {
+        if (this.id == null) this.id = SnowflakeIdGenerator.nextId();
+        if (this.deleted == null) this.deleted = false;
+        if (this.createTime == null) this.createTime = LocalDateTime.now();
+        if (this.updateTime == null) this.updateTime = this.createTime;
+    }
+
+    @PreUpdate
+    public void touchUpdateTime() {
+        this.updateTime = LocalDateTime.now();
+    }
+
+    @Column(name = "user_a_id")
+    private Long userAId;
+
+    @Column(name = "user_b_id")
+    private Long userBId;
+
+    @Column(name = "create_time")
+    private LocalDateTime createTime;
+
+    @Column(name = "update_time")
+    private LocalDateTime updateTime;
+
+    @Column(name = "deleted")
+    private Boolean deleted;
+}
