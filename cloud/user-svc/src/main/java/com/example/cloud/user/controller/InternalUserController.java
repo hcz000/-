@@ -70,4 +70,14 @@ public class InternalUserController {
     private UserInfoDTO toDto(User user) {
         return new UserInfoDTO(user.getId(), user.getUsername(), user.getAvatar());
     }
+
+    /**
+     * 返回用户角色字符串（admin / user 等）。
+     * 供其他服务做 admin 权限校验时调用，避免反复传输 password 等敏感字段。
+     */
+    @GetMapping("/{userId}/role")
+    public String getUserRole(@PathVariable Long userId) {
+        User user = userService.getById(userId);
+        return user == null ? "" : (user.getRole() == null ? "" : user.getRole());
+    }
 }

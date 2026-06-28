@@ -204,6 +204,41 @@ public class PostService {
         });
     }
 
+    // ===== Admin 后台辅助 =====
+
+    public Postings getById(Long id) {
+        return id == null ? null : postingsRepository.findById(id).orElse(null);
+    }
+
+    public boolean updateById(Postings post) {
+        if (post == null || post.getPostingsId() == null) return false;
+        post.setUpdateTime(LocalDateTime.now());
+        postingsRepository.save(post);
+        return true;
+    }
+
+    /**
+     * 多条件查询（admin 用）。
+     */
+    public org.springframework.data.domain.Page<Postings> getPostList(
+            Long planetId, Long userId, String keyword, int pageNum, int pageSize) {
+        Specification<Postings> spec = (root, query, cb) -> {
+            Predicate p = cb.equal(root.get("deleted"), false);
+            if (planetId != null) p = cb.and(p, cb.equal(root.get("planetId"), planetId));
+            if (userId != null) p = cb.and(p, cb.equal(root.get("userId"), userId));
+            if (StringUtils.hasText(keyword)) {
+                Predicate titleLike = cb.like(root.get("title"), "%" + keyword + "%");
+                Predicate contentLike = cb.like(root.get("content"), "%" + keyword + "%");
+                p = cb.and(p, cb.or(titleLike, contentLike));
+            }
+            return p;
+        };
+        return postingsRepository.findAll(spec,
+                PageRequest.of(pageNum - 1, pageSize,
+                        org.springframework.data.domain.Sort.by(
+                                org.springframework.data.domain.Sort.Direction.DESC, "createTime")));
+    }
+
     // ===== Validation =====
 
     private void validate(Postings post) {

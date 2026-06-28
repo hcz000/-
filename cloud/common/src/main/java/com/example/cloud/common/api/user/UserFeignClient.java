@@ -45,4 +45,11 @@ public interface UserFeignClient {
      */
     @GetMapping("/internal/user/batch")
     Map<Long, UserInfoDTO> getUsersByIds(@RequestParam("ids") List<Long> userIds);
+
+    /**
+     * 获取用户角色（如 "admin" / "user"）。
+     * 供其他服务做 admin 鉴权时使用。
+     */
+    @GetMapping("/internal/user/{userId}/role")
+    String getUserRole(@PathVariable("userId") Long userId);
 }

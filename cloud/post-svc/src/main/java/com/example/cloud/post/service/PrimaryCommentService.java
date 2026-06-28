@@ -81,4 +81,18 @@ public class PrimaryCommentService {
         });
         return count;
     }
+
+    /**
+     * 多条件查询（admin 用）。
+     */
+    public Page<PrimaryComment> getCommentList(Long postId, Long userId, int pageNum, int pageSize) {
+        Specification<PrimaryComment> spec = (root, query, cb) -> {
+            Predicate p = cb.equal(root.get("deleted"), false);
+            if (postId != null) p = cb.and(p, cb.equal(root.get("postingsId"), postId));
+            if (userId != null) p = cb.and(p, cb.equal(root.get("userId"), userId));
+            return p;
+        };
+        return primaryCommentRepository.findAll(spec,
+                PageRequest.of(pageNum - 1, pageSize, Sort.by(Sort.Direction.DESC, "createTime")));
+    }
 }
