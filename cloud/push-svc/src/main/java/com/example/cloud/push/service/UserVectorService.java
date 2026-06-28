@@ -1,41 +1,111 @@
 package com.example.cloud.push.service;
 
+import com.example.cloud.push.entity.UserInterestModel;
 import com.example.cloud.push.enums.PostingType;
+import com.example.cloud.push.repository.UserInterestModelRepository;
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 用户兴趣向量服务 —— STUB 版。
+ * 用户兴趣向量服务（真实实现，简化版）。
  * <p>
- * 单体版的真实实现依赖 {@code UserInterestModel} 实体、Caffeine 二级缓存、
- * 事件驱动的滑动平均更新等，约 385 行代码。
- * <p>
- * 当前微服务骨架阶段：
+ * 与单体版的差异（保留核心算法）：
  * <ul>
- *   <li>{@link #isStableStage(Long)} 始终返回 true，避免阻塞 push.a 走兴趣推荐</li>
- *   <li>{@link #getTypeRatios(Long)} 返回均匀分布的兴趣比例</li>
+ *   <li>滑动平均维护 weight（每次事件按 alpha 比例混入）</li>
+ *   <li>event_count 累加，达到阈值认为进入稳定阶段</li>
+ *   <li>简化点：去掉 Caffeine + Redis 二级缓存，每次查 DB（演示规模够用）</li>
+ *   <li>简化点：去掉 user:vector:ratios 预算缓存（同上）</li>
  * </ul>
- * TODO 后续把真实实现迁过来，或拆为独立的「画像服务」。
+ *
+ * <h3>事件接入</h3>
+ * 当前没有事件源（post-svc 的点赞/评论事件未发到 push-svc）。
+ * 后续扩展时由 post-svc 发 UserBehaviorEvent，
+ * push-svc 消费后调 {@link #updateUserVector}。
  */
 @Slf4j
 @Service
 public class UserVectorService {
 
+    /** 滑动平均系数 */
+    @Value("${app.vector.alpha:0.1}")
+    private float alpha;
+
+    /** 进入稳定阶段的事件阈值 */
+    @Value("${app.vector.stable-threshold:5}")
+    private int stableThreshold;
+
+    @Resource
+    private UserInterestModelRepository userInterestModelRepository;
+
     /**
-     * 用户兴趣向量是否进入「稳定阶段」。
-     * 单体版根据事件数 vs 阈值判断；当前 stub 始终返回 true。
+     * 用户对某类型的行为事件 → 更新该用户的兴趣权重。
      */
-    public boolean isStableStage(Long userId) {
-        return true;
+    @Transactional(rollbackFor = Exception.class)
+    public void updateUserVector(Long userId, PostingType postingType) {
+        if (userId == null || postingType == null) return;
+        String key = postingType.name();
+        UserInterestModel model = userInterestModelRepository
+                .findByUserIdAndInterestKey(userId, key)
+                .orElseGet(() -> {
+                    UserInterestModel m = new UserInterestModel();
+                    m.setUserId(userId);
+                    m.setInterestKey(key);
+                    m.setWeight(0f);
+                    m.setEventCount(0);
+                    return m;
+                });
+        // 滑动平均：new = (1 - alpha) * old + alpha * 1.0
+        float newWeight = (1 - alpha) * model.getWeight() + alpha * 1.0f;
+        model.setWeight(newWeight);
+        model.setEventCount(model.getEventCount() + 1);
+        model.setUpdateTime(LocalDateTime.now());
+        userInterestModelRepository.save(model);
     }
 
     /**
-     * 用户的类型偏好比例。
-     * 当前 stub：均匀分布，每种类型 12.5%。
+     * 用户是否进入「兴趣稳定阶段」。
+     * 算法：所有类型的事件总数超过阈值。
+     */
+    public boolean isStableStage(Long userId) {
+        if (userId == null) return false;
+        List<UserInterestModel> rows = userInterestModelRepository.findByUserId(userId);
+        int total = rows.stream().mapToInt(UserInterestModel::getEventCount).sum();
+        return total >= stableThreshold;
+    }
+
+    /**
+     * 用户的类型偏好比例（每个类型一行，未出现的类型按 0 占比）。
      */
     public List<TypeRatio> getTypeRatios(Long userId) {
+        if (userId == null) return getDefaultRatios();
+        List<UserInterestModel> rows = userInterestModelRepository.findByUserId(userId);
+        if (rows.isEmpty()) return getDefaultRatios();
+
+        // 总权重
+        float total = (float) rows.stream().mapToDouble(UserInterestModel::getWeight).sum();
+        if (total <= 0) return getDefaultRatios();
+
+        List<TypeRatio> result = new ArrayList<>(PostingType.values().length);
+        for (PostingType type : PostingType.values()) {
+            float weight = rows.stream()
+                    .filter(r -> type.name().equals(r.getInterestKey()))
+                    .map(UserInterestModel::getWeight)
+                    .findFirst()
+                    .orElse(0f);
+            result.add(new TypeRatio(type, weight / total));
+        }
+        return result;
+    }
+
+    /** 默认均匀分布（冷启动） */
+    private List<TypeRatio> getDefaultRatios() {
         float uniform = 1.0f / PostingType.values().length;
         return java.util.Arrays.stream(PostingType.values())
                 .map(t -> new TypeRatio(t, uniform))
