@@ -34,6 +34,9 @@ public class PrimaryCommentService {
     @Resource
     private LikeService likeService;
 
+    @Resource
+    private FirstCommentService firstCommentService;
+
     @Transactional(rollbackFor = Exception.class)
     public PrimaryComment createComment(PrimaryComment comment) {
         if (comment == null || comment.getPostingsId() == null || !StringUtils.hasText(comment.getContent())) {
@@ -51,6 +54,8 @@ public class PrimaryCommentService {
             post.setUpdateTime(now);
             postingsRepository.save(post);
         });
+        // 首评标记（如果是这条帖子的第一条评论）
+        firstCommentService.recordFirstComment(saved.getPostingsId(), saved.getId());
         return saved;
     }
 
