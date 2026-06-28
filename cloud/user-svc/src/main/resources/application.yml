@@ -80,6 +80,13 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  # ===== 链路追踪 =====
+  tracing:
+    sampling:
+      probability: 1.0          # demo 用 100% 采样，生产建议 0.01~0.1
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
 
 # ===== Seata 客户端 =====
 # Seata server 是 file 模式（不走 Nacos），直接配 TC 地址
