@@ -8,11 +8,15 @@ spring:
       password: ${NACOS_PASSWORD:nacos}
       discovery:
         enabled: true
-        namespace: ${NACOS_NAMESPACE:public}
+        namespace: ${NACOS_NAMESPACE:}
         group: DEFAULT_GROUP
         ephemeral: true
       config:
-        enabled: false
-        namespace: ${NACOS_NAMESPACE:public}
+        # 启用 Nacos 配置中心，dataId 默认为 ${spring.application.name}.${file-extension}
+        # 即 push-svc.yml
+        enabled: true
+        namespace: ${NACOS_NAMESPACE:}
         group: DEFAULT_GROUP
         file-extension: yml
+        # Nacos 长轮询超时（默认 30s）
+        refresh-enabled: true

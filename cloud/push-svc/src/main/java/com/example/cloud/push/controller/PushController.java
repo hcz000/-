@@ -108,6 +108,17 @@ public class PushController {
         return SaResult.ok().setData(enriched.isEmpty() ? null : enriched.get(0).getAuthor());
     }
 
+    /**
+     * 演示 Nacos 配置中心热更新：返回当前激活的推荐策略名。
+     * <p>
+     * 在 Nacos 上改 {@code push-svc.yml} 中的 {@code app.recommend.strategy}，
+     * 不重启 push-svc 也能立即在这个接口看到新值。
+     */
+    @GetMapping("/_strategy")
+    public SaResult activeStrategy() {
+        return SaResult.ok().setData(pushService.getActiveStrategyName());
+    }
+
     private Set<Long> resolveExcludeIds(String excludeIdsParam) {
         Set<Long> result = parseCsv(excludeIdsParam);
         if (StpUtil.isLogin()) {

@@ -5,6 +5,21 @@ spring:
   application:
     name: push-svc
 
+  # Spring Cloud 2023+ 用 spring.config.import 引入 Nacos 配置
+  # （old bootstrap.yml + spring.cloud.nacos.config.enabled 模式在 SCA 2023.0.x 不再自动加载）
+  #
+  # 已知限制：SCA 2023.0.3.2 + 此模式下，Nacos 配置变更通知到达时，
+  # NacosContextRefresher 比较「旧 Env vs 新 Env」会发现 diff 为空（因为 PropertySource
+  # 已经被原子替换为新值），结果 RefreshEvent 不再传播给 @RefreshScope 的 bean。
+  # 等效效果：初始加载 ✅，运行时热推送 ❌。
+  # 工作场景生产建议：
+  #   1) 用 @NacosConfigListener 直接监听并手动 setter（绕开 Spring refresh）
+  #   2) 升级到 SCA 修复版本
+  #   3) 重启服务接受新配置（k8s 滚动发布场景）
+  config:
+    import:
+      - optional:nacos:push-svc.yml?refresh=true
+
   threads:
     virtual:
       enabled: true
@@ -121,7 +136,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,refresh
 
 logging:
   level:

@@ -13,6 +13,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
+@RefreshScope
 public class PushService {
 
     private static final int TOTAL_PUSH_COUNT = 10;
@@ -83,6 +85,16 @@ public class PushService {
 
     @Value("${app.recommend.strategy:interestStrategy}")
     private String activeStrategyName;
+
+    /**
+     * 暴露当前激活的策略名（演示 Nacos 配置热更新用）。
+     * <p>
+     * 因为 PushService 上有 {@link RefreshScope}，Nacos 配置变更后，
+     * Spring 会销毁旧实例、按新值重建，下次取到的就是新策略名。
+     */
+    public String getActiveStrategyName() {
+        return activeStrategyName;
+    }
 
     // ===== 对外 API =====
 

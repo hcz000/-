@@ -49,6 +49,7 @@ public class SaTokenReactorConfig {
             "/api/push/random",
             "/api/push/hot",
             "/api/push/_ping/**",
+            "/api/push/_strategy",
             // 平台基础设施
             "/actuator/**",
             "/favicon.ico"
