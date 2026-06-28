@@ -35,6 +35,24 @@
             <artifactId>jakarta.validation-api</artifactId>
         </dependency>
 
+        <!-- Jackson（LongToStringSerializer + JacksonConfig 用）-->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Spring Data 通用（PageImpl mix-in 用）-->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-commons</artifactId>
+        </dependency>
+
+        <!-- Spring Boot AutoConfigure（@Configuration 等）-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
