@@ -112,6 +112,29 @@ public class UserVectorService {
                 .toList();
     }
 
+    /**
+     * 批量应用兴趣事件（一批同一用户的 PostingType），返回实际应用条数。
+     * 供 UserVectorBufferService 用来高吞吐场景下批处理。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public int applyUserVectorBatch(Long userId, List<PostingType> postingTypes) {
+        if (userId == null || postingTypes == null || postingTypes.isEmpty()) return 0;
+        int applied = 0;
+        for (PostingType type : postingTypes) {
+            if (type == null) continue;
+            updateUserVector(userId, type);
+            applied++;
+        }
+        return applied;
+    }
+
+    /**
+     * 清理本用户的兴趣比例缓存（接口预留；当前简化版没有缓存层，等价于 no-op）。
+     */
+    public void evictTypeRatiosCache(Long userId) {
+        // simplified: no Redis/Caffeine cache layer in this implementation
+    }
+
     public record TypeRatio(PostingType type, float ratio) {
         public String typeName() {
             return type.getTypeName();

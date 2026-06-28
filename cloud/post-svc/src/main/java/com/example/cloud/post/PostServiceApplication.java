@@ -16,6 +16,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableDiscoveryClient
 @EnableFeignClients(basePackages = "com.example.cloud")
 @EnableScheduling
+@org.springframework.scheduling.annotation.EnableAsync
 public class PostServiceApplication {
 
     public static void main(String[] args) {
