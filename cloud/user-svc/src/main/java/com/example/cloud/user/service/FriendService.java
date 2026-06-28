@@ -39,6 +39,9 @@ public class FriendService {
     @Resource
     private UserRepository userRepository;
 
+    @Resource
+    private NotificationPublisher notificationPublisher;
+
     @Transactional(rollbackFor = Exception.class)
     public void sendFriendRequest(Long requesterId, Long targetUserId, String message) {
         if (targetUserId == null) throw new BusinessException("目标用户不能为空");
@@ -74,8 +77,12 @@ public class FriendService {
         friendRequestRepository.save(request);
         if (accept) {
             createRelation(request.getRequesterId(), request.getTargetId(), now);
+            notificationPublisher.notifyFriendRequestAccepted(
+                    request.getTargetId(), request.getRequesterId(), requestId);
+        } else {
+            notificationPublisher.notifyFriendRequestRejected(
+                    request.getTargetId(), request.getRequesterId(), requestId);
         }
-        // TODO 跨服务：通过 MQ 通知 notification-svc / 后续在 user-svc 内集成通知
         log.info("[friend.respond] DONE accept={}, requestId={}, requester={}, target={}",
                 accept, requestId, request.getRequesterId(), request.getTargetId());
     }

@@ -45,6 +45,20 @@ spring:
           max-idle: 8
           min-idle: 2
 
+  # ===== RabbitMQ（通知消息消费 + 发布）=====
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: ${RABBITMQ_USERNAME:root}
+    password: ${RABBITMQ_PASSWORD:123456}
+    listener:
+      simple:
+        acknowledge-mode: auto
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1s
+
   # ===== Mail（注册验证码）=====
   mail:
     host: ${MAIL_HOST:smtp.qq.com}

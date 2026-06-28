@@ -85,6 +85,18 @@
             <version>${seata.version}</version>
         </dependency>
 
+        <!-- RabbitMQ（通知模块：消费通知事件 + 朋友/评论等发布通知）-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- WebSocket（在线通知推送 + 聊天）-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-websocket</artifactId>
+        </dependency>
+
         <!-- LoadBalancer -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
